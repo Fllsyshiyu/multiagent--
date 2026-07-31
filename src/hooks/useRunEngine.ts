@@ -5,11 +5,12 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type {
   Artifact, EngineEvent, ExamBlueprint, ExamResult, FinalProposal, LLMConfig,
-  MetricsSnapshot, ScenarioConfig, StrategyCombo, TaskProfile, TaskType,
+  MetricsSnapshot, StrategyCombo, TaskType,
 } from '../engine/types'
 import { createLLMCaller } from '../engine/llm'
 import { createScriptedCaller, type ScriptData } from '../engine/scripted'
-import { runInput } from '../engine/runner'
+import { analyzeInput, runInput } from '../engine/runner'
+import type { ForceTrack, ScenarioConfig, TaskProfile } from '../engine/types'
 
 export interface PhaseItem {
   kind: 'agent_start' | 'artifact' | 'speech' | 'fishbowl_plan' | 'adaptation' | 'retry' | 'game_event' | 'game_state' | 'vote' | 'exam_frozen' | 'exam_result' | 'final_proposal'
@@ -37,6 +38,9 @@ export type Block =
 export interface RunState {
   status: 'idle' | 'running' | 'done' | 'error'
   blocks: Block[]
+  /** 分析阶段产出的暂存配置（用户确认后才真正启动引擎） */
+  stagedConfig: ScenarioConfig | null
+  stagedProfile: TaskProfile | null
   metrics: MetricsSnapshot | null
   ledger: { total_tokens: number; calls: number; by_phase: Record<string, number> }
   examBlueprint: ExamBlueprint | null
@@ -48,6 +52,8 @@ export interface RunState {
 const initialState: RunState = {
   status: 'idle',
   blocks: [],
+  stagedConfig: null,
+  stagedProfile: null,
   metrics: null,
   ledger: { total_tokens: 0, calls: 0, by_phase: {} },
   examBlueprint: null,
@@ -58,14 +64,43 @@ const initialState: RunState = {
 
 export function useRunEngine() {
   const [state, setState] = useState<RunState>(initialState)
+  const [delibMode, setDelibMode] = useState<ForceTrack>('auto')
   const runIdRef = useRef(0)
 
   const apply = useCallback((e: EngineEvent) => {
     setState((prev) => reduceEvent(prev, e))
   }, [])
 
+  /** 分析阶段：仅运行 Dispatcher + Compiler，编译出 Agent Pool 但不启动引擎 */
+  const analyze = useCallback(
+    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack }) => {
+      const runId = ++runIdRef.current
+      setState({ ...initialState, status: 'running' })
+      const caller = opts.llm
+        ? createLLMCaller(opts.llm)
+        : createScriptedCaller(opts.script!)
+      const guardedApply = (e: EngineEvent) => {
+        if (runId === runIdRef.current) apply(e)
+      }
+      try {
+        const result = await analyzeInput(input, caller, guardedApply, opts.forceTrack)
+        if (runId === runIdRef.current) {
+          setState((prev) => ({
+            ...prev,
+            status: 'idle',
+            stagedConfig: result.config ?? null,
+            stagedProfile: result.profile ?? null,
+          }))
+        }
+      } catch (err) {
+        guardedApply({ t: 'error', message: err instanceof Error ? err.message : String(err) })
+      }
+    },
+    [apply],
+  )
+
   const start = useCallback(
-    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null }) => {
+    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack; skipAnalyze?: boolean }) => {
       const runId = ++runIdRef.current
       setState({ ...initialState, status: 'running' })
       const caller = opts.llm
@@ -83,12 +118,17 @@ export function useRunEngine() {
     [apply],
   )
 
+  /** 清空暂存的分析结果 */
+  const clearStaged = useCallback(() => {
+    setState((prev) => ({ ...prev, stagedConfig: null, stagedProfile: null, blocks: [], status: 'idle' }))
+  }, [])
+
   const reset = useCallback(() => {
     runIdRef.current += 1
     setState(initialState)
   }, [])
 
-  return useMemo(() => ({ state, start, reset }), [state, start, reset])
+  return useMemo(() => ({ state, start, reset, analyze, clearStaged, delibMode, setDelibMode }), [state, start, reset, analyze, clearStaged, delibMode])
 }
 
 function reduceEvent(prev: RunState, e: EngineEvent): RunState {

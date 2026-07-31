@@ -8,6 +8,39 @@ import { OrchestrationEngine, type Emit } from './engine'
 import { WerewolfGame } from './werewolf'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
+import type { ForceTrack, ScenarioConfig, TaskProfile } from './types'
+
+export async function analyzeInput(
+  userInput: string,
+  caller: LLMCaller,
+  emit: Emit,
+  forceTrack?: ForceTrack,
+): Promise<{ profile: TaskProfile; config?: ScenarioConfig }> {
+  const ledger = new TokenLedger()
+  emit({ t: 'dispatch_start', user_input: userInput })
+  const { profile, tokens } = await dispatch(caller, userInput, (n) =>
+    emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
+    forceTrack,
+  )
+  ledger.record(tokens)
+  emit({ t: 'dispatch_done', profile, tokens })
+  if (profile.task_type === 'single' || profile.agent_count <= 1) {
+    emit({ t: 'track_decided', track: 'single', reason: forceTrack === 'single' ? '用户选择单 Agent 模式' : 'agent_count=1' })
+    return { profile }
+  }
+  if (profile.task_type === 'competitive') {
+    emit({ t: 'track_decided', track: 'competitive', reason: `博弈任务（game_type=${profile.game_type}）` })
+    return { profile }
+  }
+  emit({ t: 'track_decided', track: 'collaborative', reason: forceTrack === 'multi' ? '用户选择多 Agent 议事模式' : '多方协作任务' })
+  const config = await compileScenario(
+    caller, userInput, profile,
+    (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
+    (n) => emit({ t: 'retry', reason: 'Agent 生成 JSON 解析失败，自动重试', attempt: n }),
+  )
+  emit({ t: 'compile_done', config })
+  return { profile, config }
+}
 
 export async function runInput(userInput: string, caller: LLMCaller, emit: Emit): Promise<void> {
   const ledger = new TokenLedger()

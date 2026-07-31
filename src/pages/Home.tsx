@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { PRESETS, type Preset } from '../data/presets'
-import { LLM_PRESETS, type LLMConfig } from '../engine/types'
+import { LLM_PRESETS, type LLMConfig, type ScenarioConfig } from '../engine/types'
 import { useRunEngine } from '../hooks/useRunEngine'
 import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
@@ -25,33 +25,43 @@ function loadLLMConfig(): LLMConfig | null {
 }
 
 export default function Home() {
-  const { state, start, reset } = useRunEngine()
+  const { state, start, reset, analyze, clearStaged, delibMode, setDelibMode } = useRunEngine()
   const [input, setInput] = useState('')
   const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(loadLLMConfig)
   const [showApiPanel, setShowApiPanel] = useState(false)
   const [selectedPreset, setSelectedPreset] = useState<Preset | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const reportRef = useRef<HTMLDivElement>(null)
   const running = state.status === 'running'
-  const started = state.blocks.length > 0
+  const started = (state.blocks.length > 0 && state.status !== 'idle') || state.stagedConfig !== null
+  const hasReport = state.blocks.some((b) => b.kind === 'report')
+  const showAgentConfig = state.stagedConfig !== null && !running && state.blocks.length > 0
+  const showSingleConfirm = state.stagedProfile !== null && state.stagedConfig === null && !running && state.status === 'idle'
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [state.blocks])
 
-  const handleRun = (text?: string, preset?: Preset | null) => {
+  const handleAnalyze = (text?: string, preset?: Preset | null) => {
     const finalInput = text ?? input
     if (!finalInput.trim()) return
     const p = preset ?? selectedPreset
-    start(finalInput.trim(), {
-      llm: llmConfig,
-      script: !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null,
-    })
+    const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
+    analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode })
+  }
+
+  const handleConfirmRun = () => {
+    const finalInput = input.trim()
+    if (!finalInput) return
+    const p = selectedPreset
+    const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
+    start(finalInput, { llm: llmConfig, script, forceTrack: delibMode, skipAnalyze: true })
   }
 
   const handlePreset = (p: Preset) => {
     setSelectedPreset(p)
     setInput(p.input)
-    if (!running) start(p.input, { llm: llmConfig, script: !llmConfig ? p.script : null })
+    if (!running) handleAnalyze(p.input, p)
   }
 
   const config = extractConfig(state.blocks)
@@ -77,6 +87,14 @@ export default function Home() {
             >
               {llmConfig ? 'API 配置' : '填入 API Key'}
             </button>
+            {hasReport && started && !running && (
+              <button
+                onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                className="rounded-lg border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-neutral-700"
+              >
+                议事报告
+              </button>
+            )}
             {started && (
               <button
                 onClick={() => { reset(); setSelectedPreset(null) }}
@@ -108,12 +126,41 @@ export default function Home() {
             </p>
           </div>
 
+          {/* 议事模式选择器 */}
+          {llmConfig && (
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-widest text-neutral-400">议事模式</span>
+              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
+                {([
+                  { key: 'auto' as const, label: 'Auto · 智能识别' },
+                  { key: 'single' as const, label: '单 Agent' },
+                  { key: 'multi' as const, label: '多 Agent' },
+                ]).map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => setDelibMode(m.key)}
+                    className={`rounded-md px-4 py-1.5 text-[12.5px] font-medium transition-all ${
+                      delibMode === m.key
+                        ? 'bg-white text-neutral-900 shadow-sm'
+                        : 'text-neutral-500 hover:text-neutral-700'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-neutral-400">
+                {delibMode === 'auto' ? 'Dispatcher 自动判别任务类型' : delibMode === 'single' ? '强制使用单 Agent 直接回答' : '强制启动多 Agent 协作议事'}
+              </span>
+            </div>
+          )}
+
           {/* 输入框 */}
           <div className="mt-10 rounded-2xl border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleRun() } }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAnalyze() } }}
               placeholder="例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…"
               rows={3}
               className="w-full resize-none rounded-2xl bg-transparent px-5 pt-4 text-[15px] leading-relaxed outline-none placeholder:text-neutral-400"
@@ -123,14 +170,46 @@ export default function Home() {
                 {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 将播放预录演示'}
               </span>
               <button
-                onClick={() => handleRun()}
+                onClick={() => handleAnalyze()}
                 disabled={!input.trim()}
                 className="rounded-xl bg-neutral-900 px-5 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
               >
-                开始编排 →
+                开始
               </button>
             </div>
           </div>
+
+          {/* 单 Agent 轨道：分析完成，直接启动提示 */}
+          {showSingleConfirm && (
+            <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5 text-center">
+              <p className="text-[13px] text-neutral-700">
+                分析完成：此任务判定为<strong>单 Agent 轨道</strong>，无需多 Agent 协作，直接启动即可。
+              </p>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                <button
+                  onClick={() => clearStaged()}
+                  className="rounded-lg border border-neutral-200 px-4 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:bg-neutral-100"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleConfirmRun}
+                  className="rounded-lg bg-neutral-900 px-5 py-1.5 text-[13px] font-medium text-white hover:bg-neutral-700"
+                >
+                  启动
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Agent 配置面板（分析完成后显示） */}
+          {showAgentConfig && state.stagedConfig && (
+            <AgentConfigPanel
+              config={state.stagedConfig}
+              onConfirm={handleConfirmRun}
+              onCancel={() => clearStaged()}
+            />
+          )}
 
           {/* 预设场景 */}
           <div className="mt-8">
@@ -179,6 +258,8 @@ export default function Home() {
         <main className="mx-auto max-w-6xl px-5 py-6">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
             <div ref={scrollRef} className="space-y-5">
+              {/* 议事报告锚点 */}
+              <div ref={reportRef} id="report-anchor" className="h-0" />
               {(() => {
                 let lastInner: string[] | undefined
                 return state.blocks.map((b, i) => {
@@ -205,6 +286,14 @@ export default function Home() {
                   <div className="mt-1 text-[12.5px] text-neutral-400">
                     共 {state.ledger.calls} 次 LLM 调用 · {state.ledger.total_tokens.toLocaleString()} tokens
                   </div>
+                  {hasReport && (
+                    <button
+                      onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                      className="mt-3 mr-3 rounded-lg border border-neutral-600 bg-neutral-800 px-4 py-1.5 text-[12.5px] font-medium text-white hover:bg-neutral-700"
+                    >
+                      议事报告
+                    </button>
+                  )}
                   <button onClick={() => { reset(); setSelectedPreset(null) }} className="mt-3 rounded-lg bg-white px-4 py-1.5 text-[12.5px] font-medium text-neutral-900 hover:bg-neutral-100">
                     再来一场
                   </button>
@@ -228,6 +317,118 @@ export default function Home() {
           onClose={() => setShowApiPanel(false)}
         />
       )}
+    </div>
+  )
+}
+
+function AgentConfigPanel({
+  config,
+  onConfirm,
+  onCancel,
+}: {
+  config: ScenarioConfig
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const [mode, setMode] = useState<'shared' | 'per_agent'>('shared')
+  const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, string>>({})
+  const [sharedModel, setSharedModel] = useState(LLM_PRESETS[0].model)
+
+  useEffect(() => {
+    const init: Record<string, string> = {}
+    config.agents.forEach((a) => { init[a.id] = LLM_PRESETS[0].model })
+    setPerAgentConfigs(init)
+  }, [config])
+
+  return (
+    <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[15px] font-bold text-neutral-900">Agent 角色分配 · 模型配置</h3>
+        <button onClick={onCancel} className="text-[12.5px] text-neutral-400 hover:text-neutral-600">取消</button>
+      </div>
+      <p className="mt-1 text-[12.5px] text-neutral-500">
+        Dispatcher 已分析出 {config.agents.length} 个 Agent 角色。您可选择统一模型或为不同 Agent 分配不同基座模型。
+      </p>
+
+      {/* 模型模式切换 */}
+      <div className="mt-4 flex items-center gap-2">
+        <span className="text-[12px] font-medium text-neutral-600">模型分配：</span>
+        <div className="inline-flex rounded-md border border-neutral-200 bg-neutral-50 p-0.5">
+          <button
+            onClick={() => setMode('shared')}
+            className={`rounded px-3 py-1 text-[12px] font-medium transition-all ${mode === 'shared' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+          >
+            统一模型
+          </button>
+          <button
+            onClick={() => setMode('per_agent')}
+            className={`rounded px-3 py-1 text-[12px] font-medium transition-all ${mode === 'per_agent' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+          >
+            分别指定
+          </button>
+        </div>
+      </div>
+
+      {/* Agent 卡片 */}
+      <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {config.agents.map((a) => (
+          <div key={a.id} className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-[11px] font-semibold text-white">
+                {a.name.slice(0, 1)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-neutral-900 truncate">{a.name}</div>
+                <div className="text-[11px] text-neutral-400 truncate">{a.archetype} · {a.stance}</div>
+              </div>
+            </div>
+            {mode === 'per_agent' && (
+              <div className="mt-2">
+                <select
+                  value={perAgentConfigs[a.id] ?? LLM_PRESETS[0].model}
+                  onChange={(e) => setPerAgentConfigs((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                  className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] text-neutral-800 outline-none focus:border-neutral-900"
+                >
+                  {LLM_PRESETS.map((p) => (
+                    <option key={p.model} value={p.model}>
+                      {p.name} · {p.model}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {mode === 'shared' && (
+        <div className="mt-3">
+          <label className="mb-1 block text-[12px] font-medium text-neutral-600">统一基座模型</label>
+          <select
+            value={sharedModel}
+            onChange={(e) => setSharedModel(e.target.value)}
+            className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-800 outline-none focus:border-neutral-900"
+          >
+            {LLM_PRESETS.map((p) => (
+              <option key={p.model} value={p.model}>
+                {p.name} · {p.model}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <span className="text-[11px] text-neutral-400">
+          {mode === 'shared' ? `所有 Agent 使用统一模型` : `${Object.keys(perAgentConfigs).length} 个 Agent 分别指定模型`}
+        </span>
+        <button
+          onClick={onConfirm}
+          className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700"
+        >
+          确认并启动议事
+        </button>
+      </div>
     </div>
   )
 }

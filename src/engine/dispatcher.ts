@@ -6,6 +6,8 @@
 import type { TaskProfile, StrategyCombo } from './types'
 import { callJSON, type LLMCaller } from './llm'
 
+import type { ForceTrack } from './types'
+
 const DISPATCH_SYSTEM = `你是 MA-Collab 编排框架的 Dispatcher。你的任务不是回答用户，而是对用户输入进行场景分类，输出一个 TaskProfile JSON。
 判断规则：
 1. agent_count：任务本质上需要几个智能体？简单执行类任务（写邮件、翻译、问答）=1；需要多角色协商/模拟的 >1。
@@ -31,6 +33,7 @@ export async function dispatch(
   caller: LLMCaller,
   userInput: string,
   onRetry?: (attempt: number) => void,
+  forceTrack?: ForceTrack,
 ): Promise<{ profile: TaskProfile; tokens: number }> {
   const { data, tokens } = await callJSON<TaskProfile>(
     caller,
@@ -38,8 +41,21 @@ export async function dispatch(
     `用户输入：${userInput}\n\n输出 JSON，格式：\n${DISPATCH_SCHEMA}`,
     onRetry,
   )
-  if (data.agent_count <= 1) data.task_type = 'single'
-  if (data.task_type === 'competitive' && !data.game_type) data.game_type = 'werewolf'
+  // ForceTrack 覆盖（用户手动选择议事模式）
+  if (forceTrack === 'single') {
+    data.agent_count = 1
+    data.task_type = 'single'
+    data.game_type = null
+    data.reasoning = '【用户强制单 Agent 模式】' + data.reasoning
+  } else if (forceTrack === 'multi') {
+    if (data.agent_count <= 1) data.agent_count = 3
+    if (data.task_type !== 'competitive') data.task_type = 'collaborative'
+    data.game_type = null
+    data.reasoning = '【用户强制多 Agent 模式】' + data.reasoning
+  } else {
+    if (data.agent_count <= 1) data.task_type = 'single'
+    if (data.task_type === 'competitive' && !data.game_type) data.game_type = 'werewolf'
+  }
   return { profile: data, tokens }
 }
 

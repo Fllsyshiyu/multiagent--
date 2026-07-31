@@ -292,11 +292,19 @@ export type Artifact =
 
 // ============ LLM 配置 ============
 
+export type ForceTrack = 'auto' | 'single' | 'multi'
+
 export interface LLMConfig {
   base_url: string
   api_key: string
   model: string
   temperature?: number
+}
+
+export interface AgentLLMConfig {
+  mode: 'shared' | 'per_agent'
+  shared?: LLMConfig
+  per_agent?: Record<string, LLMConfig>
 }
 
 export const LLM_PRESETS: { name: string; base_url: string; model: string }[] = [
