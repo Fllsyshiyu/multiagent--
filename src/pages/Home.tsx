@@ -9,6 +9,7 @@ import { useRunEngine } from '../hooks/useRunEngine'
 import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
 import { Chip, Spinner } from '../components/common'
+import { ComplexityBlock } from '../components/Complexity'
 
 const LLM_STORAGE_KEY = 'ma_collab_llm_config'
 
@@ -33,10 +34,12 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const reportRef = useRef<HTMLDivElement>(null)
   const running = state.status === 'running'
-  const started = (state.blocks.length > 0 && state.status !== 'idle') || state.stagedConfig !== null
+  const started = state.blocks.length > 0 && state.status !== 'idle'
   const hasReport = state.blocks.some((b) => b.kind === 'report')
   const showAgentConfig = state.stagedConfig !== null && !running && state.blocks.length > 0
-  const showSingleConfirm = state.stagedProfile !== null && state.stagedConfig === null && !running && state.status === 'idle'
+  const showSingleConfirm = state.stagedProfile !== null && state.stagedProfile.task_type === 'single' && state.stagedConfig === null && !running && state.status === 'idle'
+  const stagedComplexity = state.blocks.find((b) => b.kind === 'complexity' && !b.running)
+  const showCompetitiveConfirm = state.stagedProfile?.task_type === 'competitive' && !running && state.status === 'idle'
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -55,7 +58,18 @@ export default function Home() {
     if (!finalInput) return
     const p = selectedPreset
     const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
-    start(finalInput, { llm: llmConfig, script, forceTrack: delibMode, skipAnalyze: true })
+    start(finalInput, {
+      llm: llmConfig,
+      script,
+      forceTrack: delibMode,
+      prepared: {
+        complexity: stagedComplexity?.kind === 'complexity' && stagedComplexity.result
+          ? { result: stagedComplexity.result, tokens: 0, source: 'distilbert' }
+          : undefined,
+        profile: state.stagedProfile ?? undefined,
+        config: state.stagedConfig ?? undefined,
+      },
+    })
   }
 
   const handlePreset = (p: Preset) => {
@@ -179,6 +193,18 @@ export default function Home() {
             </div>
           </div>
 
+          {/* 分析阶段即可展示复杂度，确认运行后事件流中会再次记录 */}
+          {stagedComplexity?.kind === 'complexity' && (
+            <div className="mt-5 text-left">
+              <ComplexityBlock
+                running={false}
+                result={stagedComplexity.result}
+                tokens={stagedComplexity.tokens}
+                source={stagedComplexity.source}
+              />
+            </div>
+          )}
+
           {/* 单 Agent 轨道：分析完成，直接启动提示 */}
           {showSingleConfirm && (
             <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5 text-center">
@@ -198,6 +224,19 @@ export default function Home() {
                 >
                   启动
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* 博弈轨道：无需 Agent Pool 编译，确认后加载扩展 */}
+          {showCompetitiveConfirm && (
+            <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5 text-center">
+              <p className="text-[13px] text-neutral-700">
+                分析完成：此任务判定为<strong>博弈轨道</strong>，确认后将加载对应 Game Extension。
+              </p>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                <button onClick={() => clearStaged()} className="rounded-lg border border-neutral-200 px-4 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:bg-neutral-100">取消</button>
+                <button onClick={handleConfirmRun} className="rounded-lg bg-neutral-900 px-5 py-1.5 text-[13px] font-medium text-white hover:bg-neutral-700">启动博弈</button>
               </div>
             </div>
           )}

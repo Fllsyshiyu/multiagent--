@@ -6,3 +6,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+.classifier-venv
+
+__pycache__/
+*.py[cod]

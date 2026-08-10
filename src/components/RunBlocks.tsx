@@ -10,6 +10,7 @@ import { FishbowlCircle } from './Fishbowl'
 import { ExamBlueprintView, ExamResultView } from './Exam'
 import { WerewolfRoster, WerewolfSpeechBubble, WerewolfActionLine, VoteTable } from './Werewolf'
 import { FinalProposalView } from './Artifacts'
+import { ComplexityBlock } from './Complexity'
 
 // ---------- Dispatcher ----------
 const DIM_LABELS: [keyof TaskProfile, string][] = [
@@ -312,6 +313,8 @@ function renderBold(text: string): (string | JSX.Element)[] {
 // ---------- Block 分发 ----------
 export function BlockView({ block, config, phaseIndex, prevInner }: { block: Block; config?: ScenarioConfig; phaseIndex: number; prevInner?: string[] }) {
   switch (block.kind) {
+    case 'complexity':
+      return <ComplexityBlock running={block.running} result={block.result} tokens={block.tokens} source={block.source} />
     case 'dispatch':
       return <DispatchBlock running={block.running} profile={block.profile} tokens={block.tokens} />
     case 'track':

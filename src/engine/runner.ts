@@ -9,6 +9,8 @@ import { WerewolfGame } from './werewolf'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
 import type { ForceTrack, ScenarioConfig, TaskProfile } from './types'
+import type { ComplexityClassification } from '../complexity'
+import { classifyComplexity } from '../complexity'
 
 export async function analyzeInput(
   userInput: string,
@@ -17,6 +19,10 @@ export async function analyzeInput(
   forceTrack?: ForceTrack,
 ): Promise<{ profile: TaskProfile; config?: ScenarioConfig }> {
   const ledger = new TokenLedger()
+  emit({ t: 'complexity_start', user_input: userInput })
+  const complexity = await classifyComplexity(userInput)
+  ledger.record(complexity.tokens)
+  emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
   const { profile, tokens } = await dispatch(caller, userInput, (n) =>
     emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
@@ -42,13 +48,32 @@ export async function analyzeInput(
   return { profile, config }
 }
 
-export async function runInput(userInput: string, caller: LLMCaller, emit: Emit): Promise<void> {
+export interface PreparedRun {
+  complexity?: ComplexityClassification
+  profile?: TaskProfile
+  config?: ScenarioConfig
+}
+
+export async function runInput(
+  userInput: string,
+  caller: LLMCaller,
+  emit: Emit,
+  options: { forceTrack?: ForceTrack; prepared?: PreparedRun } = {},
+): Promise<void> {
   const ledger = new TokenLedger()
+  emit({ t: 'complexity_start', user_input: userInput })
+  const complexity = options.prepared?.complexity ?? await classifyComplexity(userInput)
+  ledger.record(complexity.tokens)
+  emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
 
-  const { profile, tokens } = await dispatch(caller, userInput, (n) =>
-    emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
-  )
+  const dispatched = options.prepared?.profile
+    ? { profile: options.prepared.profile, tokens: 0 }
+    : await dispatch(caller, userInput, (n) =>
+      emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
+      options.forceTrack,
+    )
+  const { profile, tokens } = dispatched
   ledger.record(tokens)
   emit({ t: 'dispatch_done', profile, tokens })
 
@@ -85,13 +110,16 @@ export async function runInput(userInput: string, caller: LLMCaller, emit: Emit)
 
   // ---- 轨道三：协作编排 ----
   emit({ t: 'track_decided', track: 'collaborative', reason: `判定为多方协作任务 → Scenario Compiler 编译场景配置` })
-  const config = await compileScenario(
+  const config = options.prepared?.config ?? await compileScenario(
     caller,
     userInput,
     profile,
     (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
     (n) => emit({ t: 'retry', reason: 'Agent 生成 JSON 解析失败，自动重试', attempt: n }),
   )
+  if (options.prepared?.config) {
+    emit({ t: 'compile_step', step: 3, name: '复用已确认配置', detail: '复用分析阶段生成的 Agent Pool、策略与阶段配置，避免重复调用与结果漂移', tokens: 0 })
+  }
   emit({ t: 'compile_done', config })
   const engine = new OrchestrationEngine(caller, emit)
   await engine.runCollaborative(config)

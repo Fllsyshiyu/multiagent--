@@ -9,6 +9,8 @@
 ```
 用户输入（一句话）
     │
+    ├── Query Complexity Classifier（小模型 + Rubric + 本地校准）→ Level 1-5
+    │
     ▼
 Dispatcher（一次 LLM 调用，~300 tokens）
     ├── agent_count = 1      → 单 Agent 轨道：直接回答，跳过编排
@@ -24,6 +26,15 @@ Dispatcher（一次 LLM 调用，~300 tokens）
             复用 A5 私聊 / B5 权限信息 / A3 全体发言 / E7 投票
             核心框架零改动
 ```
+
+## 五级 Query 复杂度
+
+`src/complexity/` 只使用本地 DistilBERT，对任意任务输出六项 `0-4` 指标：推理深度、执行步骤、专业知识、工具依赖、协调复杂度和不确定性。最终 Level 1-5 由固定序数规则根据六项指标计算。
+
+- 不调用远端 LLM 进行复杂度打分
+- 不展示或使用 `no_llm / small_llm / large_llm` 三档
+- 不使用关键词经验规则补分
+- 服务不可用时明确提示启动 `npm run classifier:dev`
 
 ## 原子策略族（19 项）
 
@@ -57,7 +68,9 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 
 ```bash
 npm install
-npm run dev      # 本地开发
+npm run classifier:setup  # 首次：安装 DistilBERT 本地服务依赖
+npm run classifier:dev    # 终端 1：启动分类服务（首次下载约 268MB 权重）
+npm run dev               # 终端 2：启动前端
 npm run build    # 构建到 dist/
 ```
 
@@ -70,6 +83,7 @@ npm run build    # 构建到 dist/
 
 ```
 src/
+├── complexity/        # DistilBERT 六维指标与 Level 1-5
 ├── engine/            # MA-Collab 框架内核（与 UI 无关，可独立复用）
 │   ├── types.ts       #   统一数据契约（TaskProfile/策略/工件/事件流）
 │   ├── dispatcher.ts  #   一句话分类 + 30 格决策表 + 组合规则校验
@@ -83,7 +97,9 @@ src/
 │   └── ledger.ts      #   Token 账本
 ├── data/scripts/      # 四个预录剧本
 ├── components/        # 视图组件（鱼缸环形图/评分矩阵/试卷/狼人杀等）
-└── hooks/             # 事件流归约 Hook
+├── hooks/             # 事件流归约 Hook
+services/
+└── query-complexity/  # FastAPI + DistilBERT 本地推理服务
 ```
 
 ## 边界声明

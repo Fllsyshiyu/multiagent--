@@ -9,7 +9,7 @@ import type {
 } from '../engine/types'
 import { createLLMCaller } from '../engine/llm'
 import { createScriptedCaller, type ScriptData } from '../engine/scripted'
-import { analyzeInput, runInput } from '../engine/runner'
+import { analyzeInput, runInput, type PreparedRun } from '../engine/runner'
 import type { ForceTrack, ScenarioConfig, TaskProfile } from '../engine/types'
 
 export interface PhaseItem {
@@ -27,6 +27,7 @@ export interface PhaseBlock {
 }
 
 export type Block =
+  | { kind: 'complexity'; running: boolean; result?: import('../complexity').ComplexityResult; tokens?: number; source?: 'distilbert' }
   | { kind: 'dispatch'; running: boolean; profile?: TaskProfile; tokens?: number }
   | { kind: 'track'; track: TaskType; reason: string }
   | { kind: 'compile'; steps: { step: number; name: string; detail: string; tokens: number }[]; config?: ScenarioConfig }
@@ -100,7 +101,7 @@ export function useRunEngine() {
   )
 
   const start = useCallback(
-    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack; skipAnalyze?: boolean }) => {
+    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack; prepared?: PreparedRun }) => {
       const runId = ++runIdRef.current
       setState({ ...initialState, status: 'running' })
       const caller = opts.llm
@@ -110,7 +111,7 @@ export function useRunEngine() {
         if (runId === runIdRef.current) apply(e)
       }
       try {
-        await runInput(input, caller, guardedApply)
+        await runInput(input, caller, guardedApply, { forceTrack: opts.forceTrack, prepared: opts.prepared })
       } catch (err) {
         guardedApply({ t: 'error', message: err instanceof Error ? err.message : String(err) })
       }
@@ -146,6 +147,14 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
   }
 
   switch (e.t) {
+    case 'complexity_start':
+      blocks.push({ kind: 'complexity', running: true })
+      break
+    case 'complexity_done': {
+      const i = blocks.findIndex((b) => b.kind === 'complexity')
+      if (i >= 0) blocks[i] = { kind: 'complexity', running: false, result: e.result, tokens: e.tokens, source: e.source }
+      break
+    }
     case 'dispatch_start':
       blocks.push({ kind: 'dispatch', running: true })
       break

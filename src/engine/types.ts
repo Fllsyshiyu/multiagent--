@@ -6,6 +6,8 @@
 
 // ============ Dispatcher · TaskProfile ============
 
+import type { ComplexityResult } from '../complexity/types'
+
 export type TaskType = 'single' | 'collaborative' | 'competitive'
 export type TimePressure = 'urgent' | 'sustained' | 'relaxed'
 export type InfoAsymmetry = 'high' | 'medium' | 'low'
@@ -253,6 +255,8 @@ export interface MetricsSnapshot {
 // ============ 引擎事件流（UI 的唯一数据源） ============
 
 export type EngineEvent =
+  | { t: 'complexity_start'; user_input: string }
+  | { t: 'complexity_done'; result: ComplexityResult; tokens: number; source: 'distilbert' }
   | { t: 'dispatch_start'; user_input: string }
   | { t: 'dispatch_done'; profile: TaskProfile; tokens: number }
   | { t: 'track_decided'; track: TaskType; reason: string }
