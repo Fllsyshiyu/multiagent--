@@ -9,8 +9,40 @@ import { WerewolfGame } from './werewolf'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
 import type { ForceTrack, ScenarioConfig, TaskProfile } from './types'
-import type { ComplexityClassification } from '../complexity'
+import type { ComplexityClassification, ComplexityResult, ComplexityLevel, ComplexityDimensions, DimensionScore } from '../complexity'
 import { classifyComplexity } from '../complexity'
+
+/** classifyComplexity 服务不可用时的降级默认值 */
+function emptyComplexity(): ComplexityClassification {
+  const dims: ComplexityDimensions = {
+    reasoning_depth: 3 as DimensionScore,
+    step_count: 2 as DimensionScore,
+    domain_expertise: 3 as DimensionScore,
+    tool_dependency: 1 as DimensionScore,
+    coordination: 2 as DimensionScore,
+    uncertainty: 2 as DimensionScore,
+  }
+  const result: ComplexityResult = {
+    complexity: 3 as ComplexityLevel,
+    dimensions: dims,
+    dimension_confidence: { reasoning_depth: 0, step_count: 0, domain_expertise: 0, tool_dependency: 0, coordination: 0, uncertainty: 0 },
+    confidence: 0,
+    model: 'fallback',
+    latency_ms: 0,
+    method: 'distilbert_anchor_similarity_v1',
+    rubric_version: 'v3',
+  }
+  return { result, tokens: 0, source: 'distilbert' }
+}
+
+async function safeClassify(query: string): Promise<ComplexityClassification> {
+  try {
+    return await classifyComplexity(query)
+  } catch (e) {
+    console.warn('Complexity service unavailable, using fallback:', e instanceof Error ? e.message : String(e))
+    return emptyComplexity()
+  }
+}
 
 export async function analyzeInput(
   userInput: string,
@@ -20,7 +52,7 @@ export async function analyzeInput(
 ): Promise<{ profile: TaskProfile; config?: ScenarioConfig }> {
   const ledger = new TokenLedger()
   emit({ t: 'complexity_start', user_input: userInput })
-  const complexity = await classifyComplexity(userInput)
+  const complexity = await safeClassify(userInput)
   ledger.record(complexity.tokens)
   emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
@@ -62,7 +94,7 @@ export async function runInput(
 ): Promise<void> {
   const ledger = new TokenLedger()
   emit({ t: 'complexity_start', user_input: userInput })
-  const complexity = options.prepared?.complexity ?? await classifyComplexity(userInput)
+  const complexity = options.prepared?.complexity ?? await safeClassify(userInput)
   ledger.record(complexity.tokens)
   emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
