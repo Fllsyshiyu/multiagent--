@@ -12,9 +12,13 @@ export function ComplexityBlock({ running, result }: { running: boolean; result?
     <SectionCard>
       <BlockHeader
         index="0"
-        title="Query Complexity · DistilBERT 六维评估"
-        sub={running ? 'DistilBERT 正在计算六项复杂度指标…' : meta?.description}
-        right={running ? <Spinner /> : result ? <Chip tone="green">本地模型 · {result.latency_ms.toFixed(1)} ms</Chip> : undefined}
+        title="Query Complexity · 云端 DistilBERT 六维评估"
+        sub={running ? '正在调用云端 DistilBERT 计算六项复杂度指标…' : meta?.description}
+        right={running ? <Spinner /> : result ? (
+          <Chip tone={result.model === 'fallback' ? 'amber' : 'green'}>
+            {result.model === 'fallback' ? '服务降级结果' : `云端模型 · ${result.latency_ms.toFixed(1)} ms`}
+          </Chip>
+        ) : undefined}
       />
       {result && meta && (
         <div className="px-5 py-4">
@@ -22,7 +26,11 @@ export function ComplexityBlock({ running, result }: { running: boolean; result?
             <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-3xl font-bold text-white ${LEVEL_STYLE[result.complexity]}`}>{result.complexity}</div>
             <div>
               <div className="text-[16px] font-bold text-neutral-900">Level {result.complexity} · {meta.name}</div>
-              <div className="mt-1 text-[12px] text-neutral-500">六项指标均由 DistilBERT 编码器计算 · 综合置信度 {Math.round(result.confidence * 100)}%</div>
+              <div className="mt-1 text-[12px] text-neutral-500">
+                {result.model === 'fallback'
+                  ? '云端模型暂不可用，当前显示保守默认值'
+                  : `六项指标均由托管 DistilBERT 编码器计算 · 综合置信度 ${Math.round(result.confidence * 100)}%`}
+              </div>
             </div>
           </div>
 

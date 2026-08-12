@@ -20,6 +20,11 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 MODEL_ID = os.getenv("QUERY_COMPLEXITY_MODEL", "tripathyShaswata/QueryComplexityRouter")
 MAX_LENGTH = int(os.getenv("QUERY_COMPLEXITY_MAX_LENGTH", "256"))
 TEMPERATURE = float(os.getenv("QUERY_COMPLEXITY_TEMPERATURE", "0.035"))
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    if origin.strip()
+]
 
 DIMENSION_ANCHORS: dict[str, list[str]] = {
     "reasoning_depth": [
@@ -179,10 +184,10 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="MA-Collab DistilBERT Complexity", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="MA-Collab Hosted DistilBERT Complexity", version="2.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

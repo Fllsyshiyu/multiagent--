@@ -1,8 +1,8 @@
 import { clampDimension, clampLevel, COMPLEXITY_RUBRIC_VERSION } from './rubric'
 import type { ComplexityDimensions, ComplexityResult } from './types'
 
-const DEFAULT_ROUTER_URL = 'http://127.0.0.1:8787'
-const REQUEST_TIMEOUT_MS = 5000
+const HOSTED_ROUTER_URL = 'https://fllsyshiyu-query-complexity.hf.space'
+const REQUEST_TIMEOUT_MS = 90_000
 
 type DimensionPayload = { score: number; confidence: number; probabilities: number[] }
 
@@ -19,13 +19,12 @@ export function getComplexityRouterUrl(): string | null {
   const configured = import.meta.env.VITE_COMPLEXITY_ROUTER_URL
   if (configured === '') return null
   if (configured) return configured.replace(/\/$/, '')
-  const isLocalPage = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  return isLocalPage ? DEFAULT_ROUTER_URL : null
+  return HOSTED_ROUTER_URL
 }
 
 export async function classifyWithDistilBert(query: string): Promise<ComplexityResult> {
   const baseUrl = getComplexityRouterUrl()
-  if (!baseUrl) throw new Error('未配置 DistilBERT complexity service。请设置 VITE_COMPLEXITY_ROUTER_URL。')
+  if (!baseUrl) throw new Error('未配置 Query Complexity 服务。请设置 VITE_COMPLEXITY_ROUTER_URL。')
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
@@ -59,7 +58,7 @@ export async function classifyWithDistilBert(query: string): Promise<ComplexityR
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('DistilBERT complexity service 请求超时，请确认 npm run classifier:dev 已启动。')
+      throw new Error('云端 Query Complexity 模型请求超时，请稍后重试。首次唤醒服务可能需要约一分钟。')
     }
     throw error
   } finally {
