@@ -3,8 +3,10 @@
  * 判断三件事：agent_count / task_type / game_type，并给出十维 TaskProfile
  * 仅一次 LLM 调用（~300-500 tokens）
  */
-import type { TaskProfile, StrategyCombo } from './types'
+import type { PhasePolicy, TaskProfile, StrategyCombo } from './types'
 import { callJSON, type LLMCaller } from './llm'
+import { policyToLegacyCombo, STRATEGY_LABELS as FINAL_STRATEGY_LABELS } from './framework/registry'
+import { validatePolicy } from './framework/validation'
 
 import type { ForceTrack } from './types'
 
@@ -66,55 +68,45 @@ interface TableRow {
   combo: StrategyCombo
 }
 
-function combo(A: string[], B: string, C: string, D: string, E: string[], notes: string[] = []): StrategyCombo {
-  return { A, B, C, D, E, notes }
+function combo(policy: PhasePolicy, notes: string[] = []): StrategyCombo {
+  return policyToLegacyCombo(policy, [], notes)
 }
 
 const DECISION_TABLE: TableRow[] = [
   {
     match: { time_pressure: 'urgent', information_asymmetry: 'high', agent_relations: 'cooperative', decision_pattern: 'single_shot', resource_scarcity: 'high' },
-    combo: combo(['A2'], 'B3', 'C2', 'D2', ['E1'], ['+ A4 C4 E3（对抗审查附加通道）']),
+    combo: combo({ A: 'A3', B: 'B3', C: 'C2', D: 'D2', E: 'E1' }, ['紧急场景采用最小能力团队']),
   },
   {
     match: { time_pressure: 'sustained', agent_relations: 'adversarial', decision_pattern: 'sequential', resource_scarcity: 'high' },
-    combo: combo(['A2'], 'B3', 'C2', 'D2', ['E4'], ['+ A4 C4 E3', '+ A3 C5 D3（Delphi 校准）']),
+    combo: combo({ A: 'A4', B: 'B3', C: 'C4', D: 'D2', E: 'E3' }, ['持续对抗场景采用动态轮换与辩证审查']),
   },
   {
     match: { time_pressure: 'relaxed', information_asymmetry: 'low', agent_relations: 'adversarial', decision_pattern: 'single_shot' },
-    combo: combo(['A1'], 'B2', 'C2', 'D2', ['E2'], ['+ A4 C4 E3']),
+    combo: combo({ A: 'A2', B: 'B2', C: 'C2', D: 'D2', E: 'E2' }, ['多利益主体采用代表制与条件收敛']),
   },
   {
     match: { time_pressure: 'relaxed', information_asymmetry: 'low', agent_relations: 'cooperative', decision_pattern: 'single_shot', resource_scarcity: 'low' },
-    combo: combo(['A3'], 'B4', 'C3', 'D2', ['E2'], []),
+    combo: combo({ A: 'A1', B: 'B1', C: 'C3', D: 'D2', E: 'E4' }),
   },
   {
     match: { time_pressure: 'relaxed', information_asymmetry: 'high', agent_relations: 'cooperative', decision_pattern: 'single_shot' },
-    combo: combo(['A1'], 'B2', 'C2', 'D2', ['E2'], []),
+    combo: combo({ A: 'A2', B: 'B3', C: 'C2', D: 'D2', E: 'E2' }),
   },
   {
     match: { time_pressure: 'urgent', information_asymmetry: 'low', agent_relations: 'cooperative', decision_pattern: 'single_shot', resource_scarcity: 'low' },
-    combo: combo(['A3'], 'B1', 'C2', 'D1', ['E1'], []),
+    combo: combo({ A: 'A3', B: 'B2', C: 'C2', D: 'D2', E: 'E1' }),
   },
   {
     match: { time_pressure: 'sustained', information_asymmetry: 'low', agent_relations: 'adversarial', decision_pattern: 'sequential', resource_scarcity: 'high' },
-    combo: combo(['A1'], 'B2', 'C2', 'D2', ['E4'], ['+ A4 C4 E3']),
+    combo: combo({ A: 'A4', B: 'B2', C: 'C4', D: 'D2', E: 'E3' }, ['持续对抗场景保留冲突路由']),
   },
 ]
 
 /** 公共议事类场景的默认配方（两阶段 Open-first Fishbowl） */
 const DEFAULT_DELIBERATION: StrategyCombo = combo(
-  ['A3', 'A1'],
-  'B3',
-  'C2',
-  'D2',
-  ['E1', 'E2', 'E7'],
-  [
-    'A3→第一阶段全员独立首发（防锚定）',
-    'A1→第二阶段按冲突数据选内圈',
-    '+ A4 C4 E3（对抗审查循环）',
-    'C2 → 自动要求 D2 结构化工件',
-    'E7 投票决议叠加于收敛之后',
-  ],
+  { A: 'A4', B: 'B2', C: 'C2', D: 'D2', E: 'E1' },
+  ['采用 Fishbowl v1：动态轮换、摘要路由、立场制、结构化工件、固定两轮'],
 )
 
 function matchScore(profile: TaskProfile, row: TableRow): number {
@@ -145,25 +137,9 @@ export function lookupDecisionTable(profile: TaskProfile): { combo: StrategyComb
 
 /** 组合规则校验（《优化框架》第三节）：同维互斥 + 自动推断 */
 export function validateCombo(c: StrategyCombo): string[] {
-  const errors: string[] = []
-  if (c.A.includes('A2') && c.A.includes('A3') && !c.A.includes('A1')) {
-    // A2⊥A3 互斥，但 Open-first Fishbowl 中 A3 用于阶段一、A1 用于阶段二，视为分阶段使用，合法
-    if (!c.A.includes('A1')) errors.push('A2 ⊥ A3：层级制与全体参与不可同阶段共存')
-  }
-  const cModes = ['C2', 'C3', 'C4', 'C5'].filter((m) => c.C === m)
-  if (cModes.length > 1) errors.push('C2 ⊥ C3 ⊥ C4 ⊥ C5：同轮只能一种思考框架')
-  const eExclusive = ['E1', 'E2', 'E4'].filter((m) => c.E.includes(m))
-  if (eExclusive.length > 2) errors.push('E1 ⊥ E2 ⊥ E4：同层只能一种主终止条件')
-  // 自动推断
-  if (c.C === 'C5' && c.D !== 'D3') errors.push('C5 Delphi 强制 D3 置信度工件')
-  if (['C2', 'C3', 'C4'].includes(c.C) && c.D === 'D1') errors.push('结构化思考强制 D2 以上工件')
-  return errors
+  if (c.A.length !== 1 || c.E.length !== 1) return ['每个阶段的 A/E 槽位必须且只能有一个 Base Strategy']
+  const result = validatePolicy({ A: c.A[0] as PhasePolicy['A'], B: c.B as PhasePolicy['B'], C: c.C as PhasePolicy['C'], D: c.D as PhasePolicy['D'], E: c.E[0] as PhasePolicy['E'] })
+  return result.issues.map((entry) => entry.message)
 }
 
-export const STRATEGY_LABELS: Record<string, string> = {
-  A1: '配额制', A2: '层级制', A3: '全体参与', A4: '指定对抗', A5: '私下沟通',
-  B1: '全量路由', B2: '摘要路由', B3: '角色约束路由', B4: '框架约束路由', B5: '角色权限信息',
-  C1: '自由思考', C2: '立场制', C3: '六帽思考', C4: '对抗制', C5: 'Delphi',
-  D1: '自由文本', D2: '结构化工件', D3: '置信度工件',
-  E1: '固定轮次', E2: '收敛检测', E3: '对抗循环', E4: '时序循环', E7: '投票决议',
-}
+export const STRATEGY_LABELS: Record<string, string> = FINAL_STRATEGY_LABELS

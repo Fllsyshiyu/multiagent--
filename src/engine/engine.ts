@@ -7,13 +7,20 @@
  */
 import type {
   CandidateProposal, ConflictMap, EngineEvent, ExamResult, FinalProposal,
-  FishbowlSummaryCard, InitialAssessmentCard, ObjectionCard, OuterObservationCard,
-  PlanScoreCard, ScenarioConfig,
+  ConflictRecord, EvidenceSubmission, FishbowlSummaryCard, ImpasseReport, InitialAssessmentCard, ObjectionCard, OuterObservationCard,
+  PlanScoreCard, ScenarioConfig, TerminalReport,
 } from './types'
-import { callJSON, type LLMCaller } from './llm'
+import { callJSON, callValidatedJSON, type LLMCaller } from './llm'
 import { asArray, asStringArray, pickObj } from './normalize'
 import { TokenLedger } from './ledger'
 import { Observer } from './observer'
+import { StructuredBlackboard } from './framework/memory'
+import { GraphExecutor, RunTrace, RuntimeGuards } from './framework/runtime'
+import type { Phase, TerminalState } from './types'
+import { finalProposalSchema, initialAssessmentSchema, objectionSchema } from './framework/schemas'
+import { InvocationAudit } from './framework/audit'
+import { createImpasseReport, createTerminalReport, EventRuleEngine } from './framework/events'
+import { processNewEvidence } from './framework/evidence'
 
 export type Emit = (e: EngineEvent) => void
 
@@ -25,10 +32,62 @@ export class OrchestrationEngine {
   private emit: Emit
   private caller: LLMCaller
   private fast: boolean
+  private blackboard = new StructuredBlackboard()
+  private trace = new RunTrace()
+  private currentPhaseId = 'compile'
+  private currentIssueId = 'root_issue'
+  private currentAgentId: string | undefined
+  private invocationAudit: InvocationAudit
 
-  constructor(caller: LLMCaller, emit: Emit, opts?: { fast?: boolean }) {
-    this.caller = caller
-    this.emit = emit
+  /** 只读审计快照；当前不接 UI，供测试、导出或后续审计面板使用。 */
+  getAuditSnapshot() {
+    return {
+      run_trace: this.trace.snapshot(),
+      blackboard: this.blackboard.snapshot(),
+      model_invocations: this.invocationAudit.snapshot(),
+    }
+  }
+
+  /** 运行中或运行后接收新证据，并返回重开议题后的新配置。调用方可据此启动续跑。 */
+  submitEvidence(config: ScenarioConfig, evidence: EvidenceSubmission, affectedIssueIds: string[], decisionRelevant = true): ScenarioConfig {
+    const result = processNewEvidence({ config, blackboard: this.blackboard, evidence, affectedIssueIds, decisionRelevant })
+    for (const evaluation of result.evaluations.filter((item) => item.matched)) this.emit({ t: 'event_rule_fired', evaluation })
+    if (result.accepted) {
+      this.emit({
+        t: 'adaptation', trigger: `收到已核验的新证据：${evidence.claim}`,
+        action: `重开议题 ${result.recompile.reopened_issue_ids.join('、')}；插入核验阶段 ${result.recompile.inserted_phase_ids.join('、')}；废止 ${result.invalidated_entry_ids.length} 个下游工件`,
+        scope: '动态重编译后的续跑配置',
+      })
+    }
+    return result.config
+  }
+
+  constructor(caller: LLMCaller, emit: Emit, opts?: {
+    fast?: boolean
+    invocationAudit?: InvocationAudit
+    callerAlreadyAudited?: boolean
+    callerForAgent?: (agentId?: string) => LLMCaller | undefined
+  }) {
+    this.invocationAudit = opts?.invocationAudit ?? new InvocationAudit()
+    const routedCaller: LLMCaller = (system, user, callOptions) =>
+      (opts?.callerForAgent?.(this.currentAgentId) ?? caller)(system, user, callOptions)
+    this.caller = opts?.callerAlreadyAudited ? routedCaller : this.invocationAudit.wrap(routedCaller)
+    this.emit = (event) => {
+      if (event.t === 'agent_start') {
+        this.currentAgentId = event.agent_id
+        this.invocationAudit.setContext(this.currentPhaseId, this.currentAgentId)
+      }
+      if (event.t === 'artifact') {
+        this.blackboard.writeArtifact({
+          artifact: event.artifact,
+          issueId: this.currentIssueId,
+          phaseId: this.currentPhaseId,
+          createdBy: event.agent_id ?? 'system_component',
+          visibility: ['public'],
+        })
+      }
+      emit(event)
+    }
     this.fast = opts?.fast ?? false
   }
 
@@ -39,6 +98,7 @@ export class OrchestrationEngine {
   // ============ 协作轨道主入口 ============
   async runCollaborative(config: ScenarioConfig): Promise<void> {
     const start = Date.now()
+    this.currentIssueId = config.issue_graph.root_issue_id
     const ctx: RunContext = {
       config,
       firstRoundCards: [],
@@ -54,59 +114,207 @@ export class OrchestrationEngine {
       examResult: null,
       adaptationFired: false,
       minorityKeptCounted: false,
+      conflictRoutes: [],
+      deliberationRounds: 0,
+      evidenceCountAtConflict: 0,
+      impasseReport: null,
+      deadlineEventFired: false,
     }
 
-    for (const phase of config.phases) {
-      this.ledger.setPhase(phase.id)
-      this.emit({ t: 'phase_start', phase_id: phase.id, name: phase.name, purpose: phase.purpose, strategy: phase.strategy })
-      await this.paced()
+    const executor = new GraphExecutor(config.phase_graph, this.trace, new RuntimeGuards(config.guards))
+    const terminal = await executor.run(
+      async (phase, softLimit) => this.executePhase(config, ctx, phase, softLimit),
+      () => ({ tokens: this.ledger.total, calls: this.ledger.calls, elapsedMs: Date.now() - start }),
+    )
+    const terminalReport = this.finalizeTerminalReport(config, ctx, terminal)
+    this.blackboard.writeRecord({
+      register: 'decisions', issueId: config.issue_graph.root_issue_id, phaseId: this.currentPhaseId,
+      payload: terminalReport, createdBy: 'terminal_state_machine', sourceRefs: terminalReport.source_refs,
+      visibility: ['public', 'audit'],
+    })
+    this.emit({ t: 'terminal_report', report: terminalReport })
+    this.emit({ t: 'audit_snapshot', model_invocations: this.invocationAudit.snapshot(), run_trace: this.trace.snapshot() })
+    this.emit({ t: 'run_done', elapsed_ms: Date.now() - start, terminal_state: terminal })
+  }
 
-      switch (phase.kind) {
-        case 'speak':
-          await this.runFirstRound(config, ctx)
-          break
-        case 'aggregate':
-          await this.runAggregate(config, ctx)
-          break
-        case 'score':
-          await this.runScoring(config, ctx)
-          break
-        case 'analyze':
-          await this.runConflict(config, ctx)
-          break
-        case 'fishbowl':
-          await this.runFishbowl(config, ctx, phase.config.round as number)
-          break
-        case 'propose':
-          await this.runPropose(config, ctx)
-          break
-        case 'evaluate':
-          await this.runExam(config, ctx)
-          break
-        case 'report':
-          await this.runReport(config, ctx)
-          break
+  private async executePhase(config: ScenarioConfig, ctx: RunContext, phase: Phase, softLimit: boolean) {
+    this.currentPhaseId = phase.id
+    this.currentAgentId = undefined
+    this.invocationAudit.setContext(phase.id)
+    this.ledger.setPhase(phase.id)
+    this.emit({ t: 'phase_start', phase_id: phase.id, name: phase.name, purpose: phase.purpose, strategy: phase.strategy })
+    if (softLimit) {
+      this.emit({ t: 'adaptation', trigger: '运行预算达到软截止', action: '不再开启可选分支，保留最终校验和报告预算', scope: '后续阶段' })
+      if (!ctx.deadlineEventFired) {
+        ctx.deadlineEventFired = true
+        const deadlineEvaluations = new EventRuleEngine(config.event_rules).evaluate('soft_or_hard_deadline', {
+          conflicts: this.blackboard.snapshot().conflicts, lowChange: false, highResidualDisagreement: false,
+          noNewEvidence: false, retryLimitReached: false, authorityRequired: config.guards.human_authority_required,
+          deadlineReached: true,
+        })
+        for (const evaluation of deadlineEvaluations.filter((item) => item.matched)) this.emit({ t: 'event_rule_fired', evaluation })
       }
-      this.emit({ t: 'phase_done', phase_id: phase.id, name: phase.name })
-      this.emit({ t: 'metrics', snapshot: this.observer.snapshot() })
-      this.emit({ t: 'ledger', ...this.ledger.snapshot() })
     }
-    this.emit({ t: 'run_done', elapsed_ms: Date.now() - start })
+    await this.paced()
+
+    let eventTerminal: TerminalState | undefined
+    switch (phase.kind) {
+      case 'speak': await this.runFirstRound(config, ctx); break
+      case 'aggregate': await this.runAggregate(config, ctx); break
+      case 'score': await this.runScoring(config, ctx); break
+      case 'analyze': await this.runConflict(config, ctx); break
+      case 'fishbowl': {
+        const round = phase.config.round as number
+        await this.runFishbowl(config, ctx, round)
+        ctx.deliberationRounds = Math.max(ctx.deliberationRounds, round)
+        if (round >= 2) eventTerminal = this.evaluateImpasse(config, ctx)
+        break
+      }
+      case 'propose': await this.runPropose(config, ctx); break
+      case 'evaluate': await this.runExam(config, ctx); break
+      case 'report': await this.runReport(config, ctx); break
+    }
+    this.emit({ t: 'phase_done', phase_id: phase.id, name: phase.name })
+    this.emit({ t: 'metrics', snapshot: this.observer.snapshot() })
+    this.emit({ t: 'ledger', ...this.ledger.snapshot() })
+    const outputRefs = this.blackboard.query({ issueId: config.issue_graph.root_issue_id }).filter((entry) => entry.phase_id === phase.id).map((entry) => entry.id)
+    let terminal: TerminalState | undefined = eventTerminal
+    if (phase.kind === 'report') {
+      terminal = this.determineReportTerminal(config, ctx)
+    }
+    const condition = phase.policy.E === 'E2' && this.observer.hasConverged()
+      ? 'converged'
+      : phase.transitions[0]?.condition ?? phase.exit_conditions[0] ?? 'artifacts_valid'
+    return { condition, terminal, outputRefs }
+  }
+
+  private agentSop(agent: ScenarioConfig['agents'][number]): string {
+    const sop = agent.sop ?? []
+    return sop.length ? `\n你的专业 SOP（必须逐项执行并在输出前自检）：${sop.join(' → ')}。` : ''
+  }
+
+  private collectMinority(ctx: RunContext): string[] {
+    return [...new Set([
+      ...(ctx.conflictMap?.minority_opinions ?? []),
+      ...ctx.summaries.flatMap((summary) => summary.minority_views ?? []),
+    ].filter(Boolean))]
+  }
+
+  private determineReportTerminal(config: ScenarioConfig, ctx: RunContext): TerminalState {
+    if (ctx.examResult?.red_line_gate !== 'pass') return 'HUMAN_ESCALATION'
+    if (config.guards.human_authority_required) return 'HUMAN_ESCALATION'
+    if (config.guards.mandatory_gates.includes('evidence_integrity') && (ctx.conflictMap?.evidence_gaps.length ?? 0) > 0) {
+      return 'WAITING_FOR_EVIDENCE'
+    }
+    if (config.guards.minority_report_required && this.collectMinority(ctx).length < (ctx.conflictMap?.minority_opinions.length ?? 0)) {
+      return 'PROVISIONAL'
+    }
+    return 'DECIDED'
+  }
+
+  private finalizeTerminalReport(config: ScenarioConfig, ctx: RunContext, terminal: TerminalState): TerminalReport {
+    const unresolved = [...new Set([
+      ...(ctx.conflictMap?.veto_risks ?? []),
+      ...ctx.summaries.flatMap((summary) => [...(summary.core_conflicts ?? []), ...(summary.unanswered_questions ?? [])]),
+    ].filter(Boolean))]
+    const missingEvidence = [...new Set(ctx.conflictMap?.evidence_gaps ?? [])]
+    const reasons = [
+      `terminal:${terminal}`,
+      ...(ctx.examResult?.red_line_gate && ctx.examResult.red_line_gate !== 'pass' ? [`red_line:${ctx.examResult.red_line_gate}`] : []),
+      ...(config.guards.human_authority_required ? ['human_authority_required'] : []),
+      ...(missingEvidence.length ? ['missing_evidence'] : []),
+      ...(ctx.impasseReport ? [`impasse:${ctx.impasseReport.impasse_type}`] : []),
+    ]
+    const defaultActions: Record<TerminalState, string[]> = {
+      DECIDED: ['按复评机制跟踪执行结果'],
+      PROVISIONAL: ['补齐未完成校验后重新终结'],
+      IMPASSE: ctx.impasseReport?.recommended_next_actions ?? ['由人类主持人选择后续解冲突程序'],
+      WAITING_FOR_EVIDENCE: ['补齐缺失证据后重开受影响议题'],
+      HUMAN_ESCALATION: ['由具有相应权限的人类主体复核并确认'],
+      ABORTED: ['检查失败阶段与审计轨迹后重新运行'],
+    }
+    return createTerminalReport({
+      terminalState: terminal, trace: this.trace.snapshot(), reasonCodes: reasons,
+      unresolvedItems: unresolved, missingEvidence, minorityPositions: this.collectMinority(ctx),
+      recommendedNextActions: defaultActions[terminal], impasseReport: ctx.impasseReport ?? undefined,
+    })
+  }
+
+  private routeForConflict(type: ConflictRecord['conflict_type']): string {
+    const routes = {
+      fact: '事实冲突：先核验证据与来源，不用投票替代事实判断',
+      interest: '利益冲突：要求受损方、受益方给出条件与补偿边界',
+      value: '价值冲突：保留异议并寻找有限重叠共识',
+      procedure: '程序冲突：交由治理/合规角色核查程序有效性',
+      authority: '权限冲突：Agent 不作终局决定，标记人类升级',
+      resource: '资源冲突：交由执行角色核查资源、工期和降级方案',
+    }
+    return routes[type]
+  }
+
+  private evaluateConflictEvents(config: ScenarioConfig, ctx: RunContext) {
+    const conflicts = this.blackboard.snapshot().conflicts
+    const evaluations = new EventRuleEngine(config.event_rules).evaluate('material_conflict_detected', {
+      conflicts, lowChange: false, highResidualDisagreement: conflicts.some((conflict) => conflict.severity >= 0.7),
+      noNewEvidence: false, retryLimitReached: false, authorityRequired: config.guards.human_authority_required,
+    })
+    for (const evaluation of evaluations.filter((item) => item.matched)) {
+      this.emit({ t: 'event_rule_fired', evaluation })
+      ctx.conflictRoutes = [...new Set(conflicts.map((conflict) => this.routeForConflict(conflict.conflict_type)))]
+      this.emit({ t: 'adaptation', trigger: `事件规则 ${evaluation.rule_id}：检测到重大决策冲突`, action: ctx.conflictRoutes.join('；'), scope: '后续鱼缸轮次' })
+    }
+  }
+
+  private evaluateImpasse(config: ScenarioConfig, ctx: RunContext): TerminalState | undefined {
+    const conflicts = this.blackboard.snapshot().conflicts
+    const roundOneRevisions = new Set(ctx.objections.filter((item) => item.round === 1).flatMap((item) => item.required_revision).map((item) => item.trim()).filter(Boolean))
+    const roundTwoRevisions = ctx.objections.filter((item) => item.round === 2).flatMap((item) => item.required_revision).map((item) => item.trim()).filter(Boolean)
+    const meaningfulNewRevision = roundTwoRevisions.some((revision) => !roundOneRevisions.has(revision))
+    const roundOnePositions = new Map(ctx.objections.filter((item) => item.round === 1).map((item) => [item.agent_id, item.support_condition.trim()]))
+    const meaningfulPositionChange = ctx.objections.filter((item) => item.round === 2)
+      .some((item) => roundOnePositions.has(item.agent_id) && roundOnePositions.get(item.agent_id) !== item.support_condition.trim())
+    const evidenceCount = this.blackboard.query({ registers: ['evidence'], issueId: config.issue_graph.root_issue_id }).length
+    const highResidualDisagreement = conflicts.some((conflict) => conflict.decision_relevant && conflict.severity >= 0.7 && (conflict.resolution_status === 'open' || conflict.resolution_status === 'retained'))
+      && ctx.summaries.some((summary) => (summary.core_conflicts?.length ?? 0) + (summary.unanswered_questions?.length ?? 0) > 0)
+    const retryLimit = Math.max(1, ...config.event_rules.filter((rule) => rule.event === 'material_conflict_detected').map((rule) => rule.retry_limit))
+    const evaluations = new EventRuleEngine(config.event_rules).evaluate('low_change_high_disagreement', {
+      conflicts,
+      lowChange: !meaningfulNewRevision && !meaningfulPositionChange && this.observer.hasLowChange(1, 0.2),
+      highResidualDisagreement,
+      noNewEvidence: evidenceCount <= ctx.evidenceCountAtConflict,
+      retryLimitReached: ctx.deliberationRounds >= retryLimit,
+      authorityRequired: config.guards.human_authority_required,
+    })
+    const matched = evaluations.find((evaluation) => evaluation.matched && evaluation.terminal_state === 'IMPASSE')
+    if (!matched) return undefined
+    this.emit({ t: 'event_rule_fired', evaluation: matched })
+    const report = createImpasseReport({
+      issueId: config.issue_graph.root_issue_id, conflicts,
+      agreedItems: [...new Set(ctx.summaries.flatMap((summary) => summary.majority_views ?? []))],
+      unresolvedClaims: [...new Set([...(ctx.conflictMap?.veto_risks ?? []), ...ctx.summaries.flatMap((summary) => summary.core_conflicts ?? [])])],
+      minorityPositions: this.collectMinority(ctx), missingEvidence: [...new Set(ctx.conflictMap?.evidence_gaps ?? [])],
+      attemptedResolutions: [...new Set(ctx.objections.flatMap((item) => item.required_revision))],
+    })
+    ctx.impasseReport = report
+    this.blackboard.writeRecord({ register: 'decisions', issueId: config.issue_graph.root_issue_id, phaseId: this.currentPhaseId, payload: report, createdBy: 'impasse_detection_v1', sourceRefs: report.source_refs, visibility: ['public', 'audit'] })
+    this.emit({ t: 'impasse_report', report })
+    return 'IMPASSE'
   }
 
   // ---- 阶段1：全员独立首发（信息隔离，B3 角色约束路由） ----
   private async runFirstRound(config: ScenarioConfig, ctx: RunContext) {
     for (const agent of config.agents) {
       this.emit({ t: 'agent_start', agent_id: agent.id, name: agent.name, archetype: agent.archetype, context_mode: '信息隔离：仅 Case Context + 自身角色卡' })
-      const { data, tokens } = await callJSON<InitialAssessmentCard>(
+      const { data, tokens } = await callValidatedJSON<InitialAssessmentCard>(
         this.caller,
         `你是「${agent.name}」，${agent.archetype}。与议题关系：${agent.relationship}。核心利益：${agent.interests.join('、')}。
 你可以说：${agent.can_say.join('；')}。你不能说：${agent.cannot_say.join('；')}。
-现在是全员独立首发阶段：你看不到其他任何 Agent 的发言，只基于自身立场独立表达，不要被想象中的多数意见带动。`,
+现在是全员独立首发阶段：你看不到其他任何 Agent 的发言，只基于自身立场独立表达，不要被想象中的多数意见带动。${this.agentSop(agent)}`,
         `议题：${config.user_input}
 输出 Initial Assessment Card（JSON）：
 {"kind":"InitialAssessmentCard","agent_id":"${agent.id}","initial_stance":"<支持/反对/条件支持/条件反对/中立>","main_concerns":["..."],"proposal_sketch":["..."],"non_negotiables":["..."],"possible_concessions":["..."],"content":"<150字内第一人称陈述>"}`,
-        (n) => this.emit({ t: 'retry', reason: '首发卡 JSON 解析失败，自动重试', attempt: n }),
+        initialAssessmentSchema,
+        (n) => this.emit({ t: 'retry', reason: '首发卡 Schema 校验失败，自动重试', attempt: n }),
       )
       this.ledger.record(tokens)
       // 结构归一化：模型可能多套一层包裹或缺字段，兜底填默认
@@ -165,7 +373,7 @@ export class OrchestrationEngine {
       const { data, tokens } = await callJSON<{ scores: PlanScoreCard[] }>(
         this.caller,
         `你是「${agent.name}」，${agent.archetype}。你的首发立场：${firstCard?.initial_stance ?? agent.stance}；底线：${firstCard?.non_negotiables.join('、') ?? '无'}。
-现在对每个候选方案轻量评分（1-5 整数），保持立场连贯，不要为了显得合群而给中庸分。`,
+现在对每个候选方案轻量评分（1-5 整数），保持立场连贯，不要为了显得合群而给中庸分。${this.agentSop(agent)}`,
         `议题：${config.user_input}\n候选方案：\n${proposalList}\n\n输出：{"scores":[{"kind":"PlanScoreCard","agent_id":"${agent.id}","proposal_id":"P1","support_score":<1-5>,"feasibility_score":<1-5>,"fairness_score":<1-5>,"risk_score":<1-5>,"main_objection":"...","support_condition":"..."}, ...]}`,
         (n) => this.emit({ t: 'retry', reason: '评分卡 JSON 解析失败，自动重试', attempt: n }),
       )
@@ -210,8 +418,38 @@ export class OrchestrationEngine {
     data.evidence_gaps = asStringArray(data.evidence_gaps, [])
     data.leading_proposal = data.leading_proposal ?? ctx.proposals[0]?.proposal_id ?? 'P1'
     ctx.conflictMap = data
+    for (const [index, risk] of data.veto_risks.entries()) {
+      this.blackboard.registerConflict({
+        issue_id: config.issue_graph.root_issue_id,
+        conflict_type: /证据|事实|数据|测量|来源/.test(risk) ? 'fact'
+          : /权限|授权|决策权/.test(risk) ? 'authority'
+            : /程序|审批|资格|规则/.test(risk) ? 'procedure'
+              : /预算|人力|工期|资源/.test(risk) ? 'resource'
+                : /价值|公平|伦理/.test(risk) ? 'value' : 'interest',
+        severity: 0.8,
+        decision_relevant: true,
+        claim_refs: [`conflict_map_veto_${index}`],
+        resolution_status: 'open',
+      })
+    }
+    for (const gap of data.evidence_gaps) {
+      this.blackboard.writeRecord({
+        register: 'unknowns', issueId: config.issue_graph.root_issue_id, phaseId: this.currentPhaseId,
+        payload: { kind: 'EvidenceGap', claim: gap, verification_status: 'missing' },
+        createdBy: '__analyst', visibility: ['public', 'audit'],
+      })
+    }
+    for (const position of data.minority_opinions) {
+      this.blackboard.writeRecord({
+        register: 'objections', issueId: config.issue_graph.root_issue_id, phaseId: this.currentPhaseId,
+        payload: { kind: 'MinorityPosition', position, retention_required: config.guards.minority_report_required },
+        createdBy: '__analyst', visibility: ['public', 'audit'],
+      })
+    }
+    ctx.evidenceCountAtConflict = this.blackboard.query({ registers: ['evidence'], issueId: config.issue_graph.root_issue_id }).length
     this.observer.recordMinority(data.minority_opinions.length, 0)
     this.emit({ t: 'artifact', artifact: data, tokens })
+    this.evaluateConflictEvents(config, ctx)
   }
 
   // ---- 阶段5/6：鱼缸讨论 ----
@@ -240,17 +478,19 @@ export class OrchestrationEngine {
       const agent = config.agents.find((a) => a.id === id)!
       const myScores = ctx.scoreCards.filter((s) => s.agent_id === id)
       this.emit({ t: 'agent_start', agent_id: id, name: agent.name, archetype: agent.archetype, context_mode: round === 1 ? 'B3：领先方案 + 冲突图 + 自身评分' : 'B3：Round1 摘要 + 外圈观察 + 自身评分' })
-      const { data, tokens } = await callJSON<ObjectionCard>(
+      const { data, tokens } = await callValidatedJSON<ObjectionCard>(
         this.caller,
         `你是「${agent.name}」，${agent.archetype}，现在是鱼缸内圈第 ${round} 轮。
 你的评分记录：${myScores.map((s) => `${s.proposal_id}支持${s.support_score}分`).join('，')}。
-不要重复初始立场，要围绕领先方案做具体的反对/回应/修正：反对哪一部分、为什么、怎么改、满足什么条件后可支持。${round === 2 ? '本轮重点：处理第一轮遗漏问题、明确责任主体、形成可执行修订。' : ''}`,
+事件规则路由：${ctx.conflictRoutes.join('；') || '按一般异议流程处理'}。
+不要重复初始立场，要围绕领先方案做具体的反对/回应/修正：反对哪一部分、为什么、怎么改、满足什么条件后可支持。${round === 2 ? '本轮重点：处理第一轮遗漏问题、明确责任主体、形成可执行修订。' : ''}${this.agentSop(agent)}`,
         `议题：${config.user_input}
 领先方案：${leading.proposal_id}「${leading.title}」${leading.summary}
 ${priorSummary ? `上一轮摘要：多数意见=${priorSummary.majority_views.join('；')}；未答问题=${priorSummary.unanswered_questions.join('；')}` : ''}
 
 输出 Objection/Revision Card（JSON）：{"kind":"ObjectionCard","round":${round},"agent_id":"${id}","objection_type":"<利益受损/公共资源/可执行性/普遍化 之一>","objection":"<120字内>","required_revision":["..."],"support_condition":"...","reply_to":"<针对的agent_id或null>"}`,
-        (n) => this.emit({ t: 'retry', reason: '异议卡 JSON 解析失败，自动重试', attempt: n }),
+        objectionSchema,
+        (n) => this.emit({ t: 'retry', reason: '异议卡 Schema 校验失败，自动重试', attempt: n }),
       )
       this.ledger.record(tokens)
       const obj: ObjectionCard = {
@@ -264,6 +504,21 @@ ${priorSummary ? `上一轮摘要：多数意见=${priorSummary.majority_views.j
         reply_to: data.reply_to ?? undefined,
       }
       ctx.objections.push(obj)
+      const first = ctx.firstRoundCards.find((card) => card.agent_id === id)
+      this.blackboard.recordRevision({
+        issue_id: config.issue_graph.root_issue_id,
+        agent_id: id,
+        phase_id: this.currentPhaseId,
+        position_before: first?.initial_stance ?? agent.stance,
+        position_after: obj.support_condition,
+        reasoning_before_ref: first ? `initial:${id}` : undefined,
+        reasoning_after_ref: `objection:${round}:${id}`,
+        revision_reason: obj.required_revision.length ? 'conditional_revision' : 'position_reaffirmed',
+        cited_argument_ids: obj.reply_to ? [`reply:${obj.reply_to}`] : [],
+        self_reported_trigger: obj.support_condition,
+        confidence: 0.6,
+        causal_status: 'self_reported',
+      })
       const grounded = /证据|数据|实测|投诉|政策|规定|案例|标准|条款|补贴|测量|造价|分贝|消防|记录/.test(obj.objection)
       if (obj.reply_to) {
         this.observer.recordQuestion()
@@ -294,7 +549,7 @@ ${priorSummary ? `上一轮摘要：多数意见=${priorSummary.majority_views.j
       this.emit({ t: 'agent_start', agent_id: id, name: agent.name, archetype: agent.archetype, context_mode: '外圈：当前方案 + 内圈摘要 + 未解决问题' })
       const { data, tokens } = await callJSON<OuterObservationCard>(
         this.caller,
-        `你是「${agent.name}」，${agent.archetype}，本轮在鱼缸外圈观察。你的任务不是长篇发言，而是指出内圈遗漏的问题、需要补充的证据，并可申请进入下一轮内圈。`,
+        `你是「${agent.name}」，${agent.archetype}，本轮在鱼缸外圈观察。你的任务不是长篇发言，而是指出内圈遗漏的问题、需要补充的证据，并可申请进入下一轮内圈。${this.agentSop(agent)}`,
         `议题：${config.user_input}
 领先方案：${leading.proposal_id}「${leading.title}」
 内圈刚刚的异议：${ctx.objections.filter((o) => o.round === round).map((o) => `${o.agent_id}：${o.objection}`).join('\n')}
@@ -326,6 +581,13 @@ ${priorSummary ? `上一轮摘要：多数意见=${priorSummary.majority_views.j
     )
     this.ledger.record(sumTokens)
     ctx.summaries.push(summary)
+    if (round >= 2) {
+      this.blackboard.updateConflicts(
+        (conflict) => conflict.resolution_status === 'open' && conflict.conflict_type !== 'fact',
+        'retained',
+        '两轮定向回应已完成；分歧仍在终态报告中保留',
+      )
+    }
     if (!ctx.minorityKeptCounted && summary.minority_views.length > 0) {
       ctx.minorityKeptCounted = true
       this.observer.recordMinority(0, 1)
@@ -382,7 +644,7 @@ ${priorSummary ? `上一轮摘要：多数意见=${priorSummary.majority_views.j
   private async runPropose(config: ScenarioConfig, ctx: RunContext) {
     this.emit({ t: 'agent_start', agent_id: '__proposer', name: 'Proposal Agent', archetype: '系统组件', context_mode: 'B2：两轮摘要 + 全部修订要求' })
     const revisions = ctx.objections.flatMap((o) => o.required_revision)
-    const { data, tokens } = await callJSON<FinalProposal>(
+    const { data, tokens } = await callValidatedJSON<FinalProposal>(
       this.caller,
       `你是 Proposal Agent。根据两轮鱼缸讨论的异议与修订要求，形成最终修订方案。
 必须包含：责任主体、资源来源、时间安排、风险控制、退出机制、复评机制；
@@ -395,7 +657,8 @@ ${priorSummary ? `上一轮摘要：多数意见=${priorSummary.majority_views.j
 否决性风险：${ctx.conflictMap?.veto_risks.join('；') ?? '无'}
 
 输出：{"kind":"FinalProposal","title":"...","goal":"...","measures":["..."],"responsible_parties":["..."],"resources":"...","timeline":"...","risk_control":["..."],"exit_mechanism":"...","review_mechanism":"...","revision_path":["<由谁的什么异议→修改了什么>"]}`,
-      (n) => this.emit({ t: 'retry', reason: '方案 JSON 解析失败，自动重试', attempt: n }),
+      finalProposalSchema,
+      (n) => this.emit({ t: 'retry', reason: '方案 Schema 校验失败，自动重试', attempt: n }),
     )
     this.ledger.record(tokens)
     ctx.finalProposal = data
@@ -474,6 +737,14 @@ Rubric：${exam.subjective.map((s) => `${s.module}（满分${s.full_score}）：
     }
     ctx.examResult = result
     this.emit({ t: 'exam_result', result })
+    if (result.red_line_gate !== 'pass') {
+      this.emit({
+        t: 'adaptation',
+        trigger: `强制红线门返回 ${result.red_line_gate.toUpperCase()}`,
+        action: '阻止系统声明自主决议，转入人类复核与授权',
+        scope: '终止状态',
+      })
+    }
   }
 
   // ---- 阶段9：最终报告 ----
@@ -486,7 +757,7 @@ Rubric：${exam.subjective.map((s) => `${s.module}（满分${s.full_score}）：
       ``,
       `**议题**：${config.user_input}`,
       ``,
-      `### 最终方案「${p.title}」`,
+      `### 待授权候选方案「${p.title}」`,
       `- 目标：${p.goal}`,
       `- 措施：${p.measures.join('；')}`,
       `- 责任主体：${p.responsible_parties.join('、')}`,
@@ -509,6 +780,7 @@ Rubric：${exam.subjective.map((s) => `${s.module}（满分${s.full_score}）：
       ``,
       `### 结论边界`,
       `- 以上方案由 AI 多智能体议事生成，仅用于辅助分析，**不替代真实公共决策与实地调研**`,
+      `- 终止状态：${e.red_line_gate === 'pass' && !config.guards.human_authority_required ? 'DECIDED' : 'HUMAN_ESCALATION（需真实授权主体确认；红线未通过时禁止作为正式决议）'}`,
       `- 待真实调研问题：${ctx.conflictMap?.evidence_gaps.join('；') ?? '无'}`,
     ].join('\n')
     this.emit({ t: 'report', markdown })
@@ -530,4 +802,9 @@ interface RunContext {
   examResult: ExamResult | null
   adaptationFired: boolean
   minorityKeptCounted: boolean
+  conflictRoutes: string[]
+  deliberationRounds: number
+  evidenceCountAtConflict: number
+  impasseReport: ImpasseReport | null
+  deadlineEventFired: boolean
 }

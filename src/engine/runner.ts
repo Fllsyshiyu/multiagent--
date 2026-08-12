@@ -8,9 +8,11 @@ import { OrchestrationEngine, type Emit } from './engine'
 import { WerewolfGame } from './werewolf'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
-import type { ForceTrack, ScenarioConfig, TaskProfile } from './types'
+import type { ForceTrack, ModelInvocation, ScenarioConfig, TaskProfile } from './types'
 import type { ComplexityClassification, ComplexityResult, ComplexityLevel, ComplexityDimensions, DimensionScore } from '../complexity'
 import { classifyComplexity } from '../complexity'
+import { InvocationAudit } from './framework/audit'
+import { createTerminalReport } from './framework/events'
 
 /** classifyComplexity 服务不可用时的降级默认值 */
 function emptyComplexity(): ComplexityClassification {
@@ -51,12 +53,15 @@ export async function analyzeInput(
   forceTrack?: ForceTrack,
 ): Promise<{ profile: TaskProfile; config?: ScenarioConfig }> {
   const ledger = new TokenLedger()
+  const invocationAudit = new InvocationAudit()
+  const auditedCaller = invocationAudit.wrap(caller)
   emit({ t: 'complexity_start', user_input: userInput })
   const complexity = await safeClassify(userInput)
   ledger.record(complexity.tokens)
   emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
-  const { profile, tokens } = await dispatch(caller, userInput, (n) =>
+  invocationAudit.setContext('dispatch')
+  const { profile, tokens } = await dispatch(auditedCaller, userInput, (n) =>
     emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
     forceTrack,
   )
@@ -64,19 +69,23 @@ export async function analyzeInput(
   emit({ t: 'dispatch_done', profile, tokens })
   if (profile.task_type === 'single' || profile.agent_count <= 1) {
     emit({ t: 'track_decided', track: 'single', reason: forceTrack === 'single' ? '用户选择单 Agent 模式' : 'agent_count=1' })
+    emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
     return { profile }
   }
   if (profile.task_type === 'competitive') {
     emit({ t: 'track_decided', track: 'competitive', reason: `博弈任务（game_type=${profile.game_type}）` })
+    emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
     return { profile }
   }
   emit({ t: 'track_decided', track: 'collaborative', reason: forceTrack === 'multi' ? '用户选择多 Agent 议事模式' : '多方协作任务' })
+  invocationAudit.setContext('compile')
   const config = await compileScenario(
-    caller, userInput, profile,
+    auditedCaller, userInput, profile,
     (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
     (n) => emit({ t: 'retry', reason: 'Agent 生成 JSON 解析失败，自动重试', attempt: n }),
   )
   emit({ t: 'compile_done', config })
+  emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
   return { profile, config }
 }
 
@@ -84,24 +93,28 @@ export interface PreparedRun {
   complexity?: ComplexityClassification
   profile?: TaskProfile
   config?: ScenarioConfig
+  modelInvocations?: ModelInvocation[]
 }
 
 export async function runInput(
   userInput: string,
   caller: LLMCaller,
   emit: Emit,
-  options: { forceTrack?: ForceTrack; prepared?: PreparedRun } = {},
+  options: { forceTrack?: ForceTrack; prepared?: PreparedRun; callerForAgent?: (agentId?: string) => LLMCaller | undefined } = {},
 ): Promise<void> {
   const ledger = new TokenLedger()
+  const invocationAudit = new InvocationAudit(options.prepared?.modelInvocations)
+  const auditedCaller = invocationAudit.wrap(caller)
   emit({ t: 'complexity_start', user_input: userInput })
   const complexity = options.prepared?.complexity ?? await safeClassify(userInput)
   ledger.record(complexity.tokens)
   emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
 
+  invocationAudit.setContext('dispatch')
   const dispatched = options.prepared?.profile
     ? { profile: options.prepared.profile, tokens: 0 }
-    : await dispatch(caller, userInput, (n) =>
+    : await dispatch(auditedCaller, userInput, (n) =>
       emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
       options.forceTrack,
     )
@@ -116,7 +129,8 @@ export async function runInput(
       t: 'phase_start', phase_id: 'direct', name: '单 Agent 直接回答', purpose: '不进入编排引擎',
       strategy: { A: [], B: 'B1', C: 'C1', D: 'D1', E: [], notes: ['无策略配方：单 Agent 轨道不使用原子策略'] },
     })
-    const { text, tokens: t2 } = await caller(
+    invocationAudit.setContext('direct', '__assistant')
+    const { text, tokens: t2 } = await auditedCaller(
       '你是一个直接、可靠的助手，简明回答用户问题。',
       userInput,
     )
@@ -128,22 +142,33 @@ export async function runInput(
       t: 'report',
       markdown: `## 运行记录\n\n**输入**：${userInput}\n\n**路由**：单 Agent 轨道（Dispatcher 判定 agent_count=1）\n\n**成本**：仅 ${ledger.total} tokens / ${ledger.calls} 次调用——对比协作轨道的数十次调用，这就是 Dispatcher 存在的意义：不是所有问题都值得启动多智能体。`,
     })
-    emit({ t: 'run_done', elapsed_ms: 0 })
+    emit({ t: 'terminal_report', report: createTerminalReport({ terminalState: 'DECIDED', trace: [{ phase_id: 'direct', state: 'completed' }], reasonCodes: ['terminal:DECIDED', 'single_agent_direct'], unresolvedItems: [], missingEvidence: [], minorityPositions: [], recommendedNextActions: [] }) })
+    emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
+    emit({ t: 'run_done', elapsed_ms: 0, terminal_state: 'DECIDED' })
     return
   }
 
   // ---- 轨道二：博弈扩展 ----
   if (profile.task_type === 'competitive') {
     emit({ t: 'track_decided', track: 'competitive', reason: `检测到博弈任务（game_type=${profile.game_type}）→ GameRegistry 加载扩展，复用通用策略，核心框架零改动` })
-    const game = new WerewolfGame(caller, emit)
+    invocationAudit.setContext('competitive_game')
+    const game = new WerewolfGame(auditedCaller, (event) => {
+      if (event.t === 'run_done') {
+        const terminal = event.terminal_state ?? 'PROVISIONAL'
+        emit({ t: 'terminal_report', report: createTerminalReport({ terminalState: terminal, trace: [{ phase_id: 'competitive_game', state: 'completed' }], reasonCodes: [`terminal:${terminal}`, 'competitive_game_complete'], unresolvedItems: [], missingEvidence: [], minorityPositions: [], recommendedNextActions: [] }) })
+        emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
+      }
+      emit(event)
+    })
     await game.run(userInput)
     return
   }
 
   // ---- 轨道三：协作编排 ----
   emit({ t: 'track_decided', track: 'collaborative', reason: `判定为多方协作任务 → Scenario Compiler 编译场景配置` })
+  invocationAudit.setContext('compile')
   const config = options.prepared?.config ?? await compileScenario(
-    caller,
+    auditedCaller,
     userInput,
     profile,
     (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
@@ -153,6 +178,6 @@ export async function runInput(
     emit({ t: 'compile_step', step: 3, name: '复用已确认配置', detail: '复用分析阶段生成的 Agent Pool、策略与阶段配置，避免重复调用与结果漂移', tokens: 0 })
   }
   emit({ t: 'compile_done', config })
-  const engine = new OrchestrationEngine(caller, emit)
+  const engine = new OrchestrationEngine(caller, emit, { invocationAudit, callerForAgent: options.callerForAgent })
   await engine.runCollaborative(config)
 }

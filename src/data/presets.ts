@@ -38,7 +38,7 @@ export const PRESETS: Preset[] = [
     label: '狼人杀一局',
     input: '来一局狼人杀：6 人局，2 狼人、1 预言家、1 女巫、2 平民，演示一个完整昼夜循环',
     track_hint: 'competitive',
-    description: '博弈轨道 · werewolf 扩展（A5 私聊 / B5 权限 / E7 投票）',
+    description: '博弈轨道 · werewolf 扩展（私密通信 Modifier / B3 角色路由 / E5 投票）',
     script: werewolfScript,
   },
   {

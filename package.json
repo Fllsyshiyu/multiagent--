@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:engine": "node scripts/run-engine-tests.mjs",
     "preview": "vite preview",
     "classifier:setup": "python3 -m venv .classifier-venv && .classifier-venv/bin/pip install -r services/query-complexity/requirements.txt",
     "classifier:dev": ".classifier-venv/bin/uvicorn app:app --app-dir services/query-complexity --host 127.0.0.1 --port 8787"

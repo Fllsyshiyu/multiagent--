@@ -22,7 +22,7 @@ export function WerewolfRoster({ dead = [] }: { dead?: string[] }) {
     <div className="rounded-xl border border-neutral-200 bg-white p-4">
       <div className="flex items-center justify-between">
         <span className="text-[13px] font-bold text-neutral-900">玩家 · 上帝视角</span>
-        <Chip tone="black">B5 权限信息：身份仅本人可见</Chip>
+        <Chip tone="black">B3 角色路由 · 身份仅本人可见</Chip>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {WEREWOLF_PLAYERS.map((p) => {
@@ -53,7 +53,7 @@ export function WerewolfSpeechBubble({ speech }: { speech: WerewolfSpeech }) {
         <div className="flex items-center gap-2">
           <span className={`text-[12.5px] font-bold ${isPrivate ? 'text-white' : 'text-neutral-900'}`}>{p?.name}</span>
           {isPrivate ? (
-            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-medium text-neutral-200">A5 私聊 · 仅狼人可见（观众上帝视角）</span>
+            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-medium text-neutral-200">私密通信 Modifier · 仅狼人可见（观众上帝视角）</span>
           ) : (
             <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-500">公开发言</span>
           )}
@@ -73,7 +73,7 @@ export function WerewolfActionLine({ action }: { action: WerewolfAction }) {
       <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded bg-neutral-900 px-1 text-[10.5px] font-bold text-white">{label}</span>
       <div className="flex-1">
         <div className="text-[13px] leading-relaxed text-neutral-800">{action.result}</div>
-        <div className="mt-0.5 font-mono text-[10.5px] text-neutral-400">{p ? `${p.name}(${p.id})` : action.actor} · B5 {audience}</div>
+        <div className="mt-0.5 font-mono text-[10.5px] text-neutral-400">{p ? `${p.name}(${p.id})` : action.actor} · B3 {audience}</div>
       </div>
     </div>
   )
@@ -86,7 +86,7 @@ export function VoteTable({ votes, result }: { votes: { agent_id: string; vote: 
     <div className="rounded-xl border border-neutral-200 bg-white p-4">
       <div className="flex items-center gap-2">
         <span className="text-[14px] font-bold text-neutral-900">投票结果</span>
-        <Chip tone="black">E7 投票决议</Chip>
+        <Chip tone="black">E5 投票决议</Chip>
       </div>
       <div className="mt-3 space-y-1.5">
         {votes.map((v, i) => (

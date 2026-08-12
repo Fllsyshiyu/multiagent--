@@ -5,10 +5,17 @@
  * - 每次调用记账到 TokenLedger
  */
 import type { LLMConfig } from './types'
+import { z } from 'zod'
 
 export interface CallResult {
   text: string
   tokens: number
+  invocation?: {
+    mode: 'live' | 'replay' | 'mock'
+    model: string
+    latency_ms: number
+    result_status: 'success' | 'error'
+  }
 }
 
 export type LLMCaller = (system: string, user: string, opts?: { json?: boolean; max_tokens?: number }) => Promise<CallResult>
@@ -18,6 +25,7 @@ export function createLLMCaller(
   onUsage?: (tokens: number) => void,
 ): LLMCaller {
   return async (system, user, opts) => {
+    const startedAt = performance.now()
     // 保险一：OpenAI 系 json_object 模式要求 prompt 中必须出现 "json" 一词，统一补齐
     const sys = opts?.json
       ? system + '\n【输出要求】请严格以 JSON（json）格式输出，不要输出任何其他内容。'
@@ -72,7 +80,11 @@ export function createLLMCaller(
     const text: string = data.choices?.[0]?.message?.content ?? ''
     const tokens: number = data.usage?.total_tokens ?? Math.ceil((sys.length + user.length + text.length) / 3)
     onUsage?.(tokens)
-    return { text, tokens }
+    return {
+      text,
+      tokens,
+      invocation: { mode: 'live', model: config.model, latency_ms: performance.now() - startedAt, result_status: 'success' },
+    }
   }
 }
 
@@ -130,11 +142,38 @@ export async function callJSON<T>(
   }
 }
 
+/** JSON 解析 + Zod 运行时校验。正式工件优先使用此入口，避免类型断言把异常输出写入黑板。 */
+export async function callValidatedJSON<T>(
+  caller: LLMCaller,
+  system: string,
+  user: string,
+  schema: z.ZodType<T>,
+  onRetry?: (attempt: number) => void,
+): Promise<{ data: T; tokens: number }> {
+  const first = await caller(system, user, { json: true })
+  const parse = (text: string): T => schema.parse(extractJSON<unknown>(text))
+  try {
+    return { data: parse(first.text), tokens: first.tokens }
+  } catch {
+    onRetry?.(2)
+    const second = await caller(
+      system,
+      user + '\n\n【系统提示】上一次输出未通过 JSON Schema 校验。请补齐所有必需字段，只输出严格合法 JSON。',
+      { json: true },
+    )
+    try {
+      return { data: parse(second.text), tokens: first.tokens + second.tokens }
+    } catch (error) {
+      throw new Error('两次尝试后输出仍未通过运行时 Schema 校验：' + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+}
+
 /** 模拟 LLM 调用（用于无 Key 时的本地 smoke test，非演示主路径） */
 export function createMockCaller(onUsage?: (tokens: number) => void): LLMCaller {
   return async (_system, user) => {
     const tokens = Math.ceil(user.length / 3) + 120
     onUsage?.(tokens)
-    return { text: '{}', tokens }
+    return { text: '{}', tokens, invocation: { mode: 'mock', model: 'mock', latency_ms: 0, result_status: 'success' } }
   }
 }

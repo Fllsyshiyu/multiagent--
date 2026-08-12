@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { PRESETS, type Preset } from '../data/presets'
-import { LLM_PRESETS, type LLMConfig, type ScenarioConfig } from '../engine/types'
+import { LLM_PRESETS, type AgentLLMConfig, type LLMConfig, type ScenarioConfig } from '../engine/types'
 import { useRunEngine } from '../hooks/useRunEngine'
 import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
@@ -31,6 +31,7 @@ export default function Home() {
   const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(loadLLMConfig)
   const [showApiPanel, setShowApiPanel] = useState(false)
   const [selectedPreset, setSelectedPreset] = useState<Preset | null>(null)
+  const [agentLLMConfig, setAgentLLMConfig] = useState<AgentLLMConfig | undefined>()
   const scrollRef = useRef<HTMLDivElement>(null)
   const reportRef = useRef<HTMLDivElement>(null)
   const running = state.status === 'running'
@@ -53,13 +54,14 @@ export default function Home() {
     analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode })
   }
 
-  const handleConfirmRun = () => {
+  const handleConfirmRun = (selectedAgentLLM?: AgentLLMConfig) => {
     const finalInput = input.trim()
     if (!finalInput) return
     const p = selectedPreset
     const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
     start(finalInput, {
       llm: llmConfig,
+      agentLLM: selectedAgentLLM ?? agentLLMConfig,
       script,
       forceTrack: delibMode,
       prepared: {
@@ -68,6 +70,7 @@ export default function Home() {
           : undefined,
         profile: state.stagedProfile ?? undefined,
         config: state.stagedConfig ?? undefined,
+        modelInvocations: state.modelInvocations,
       },
     })
   }
@@ -79,7 +82,6 @@ export default function Home() {
   }
 
   const config = extractConfig(state.blocks)
-  let phaseIdx = 0
 
   return (
     <div className="min-h-screen bg-white text-neutral-900">
@@ -127,7 +129,7 @@ export default function Home() {
           <div className="text-center">
             <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 px-3 py-1 text-[12px] text-neutral-500">
               <span className="h-1.5 w-1.5 rounded-full bg-neutral-900" />
-              一句话入口 · 三轨道路由 · 19 项原子策略
+              一句话入口 · 三轨道路由 · 20 项基础策略
             </div>
             <h1 className="mt-6 text-[34px] font-bold leading-tight tracking-tight sm:text-[44px]">
               一套框架，
@@ -219,7 +221,7 @@ export default function Home() {
                   取消
                 </button>
                 <button
-                  onClick={handleConfirmRun}
+                  onClick={() => handleConfirmRun()}
                   className="rounded-lg bg-neutral-900 px-5 py-1.5 text-[13px] font-medium text-white hover:bg-neutral-700"
                 >
                   启动
@@ -236,7 +238,7 @@ export default function Home() {
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
                 <button onClick={() => clearStaged()} className="rounded-lg border border-neutral-200 px-4 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:bg-neutral-100">取消</button>
-                <button onClick={handleConfirmRun} className="rounded-lg bg-neutral-900 px-5 py-1.5 text-[13px] font-medium text-white hover:bg-neutral-700">启动博弈</button>
+                <button onClick={() => handleConfirmRun()} className="rounded-lg bg-neutral-900 px-5 py-1.5 text-[13px] font-medium text-white hover:bg-neutral-700">启动博弈</button>
               </div>
             </div>
           )}
@@ -245,7 +247,8 @@ export default function Home() {
           {showAgentConfig && state.stagedConfig && (
             <AgentConfigPanel
               config={state.stagedConfig}
-              onConfirm={handleConfirmRun}
+              baseConfig={llmConfig}
+              onConfirm={(nextConfig) => { setAgentLLMConfig(nextConfig); handleConfirmRun(nextConfig) }}
               onCancel={() => clearStaged()}
             />
           )}
@@ -301,17 +304,18 @@ export default function Home() {
               <div ref={reportRef} id="report-anchor" className="h-0" />
               {(() => {
                 let lastInner: string[] | undefined
+                let phaseIndex = 0
                 return state.blocks.map((b, i) => {
                   let prevInner: string[] | undefined
                   if (b.kind === 'phase') {
-                    phaseIdx += 1
+                    phaseIndex += 1
                     const plan = b.phase.items.find((it) => it.data.t === 'fishbowl_plan')
                     if (plan && plan.data.t === 'fishbowl_plan') {
                       prevInner = lastInner
                       lastInner = plan.data.inner
                     }
                   }
-                  return <BlockView key={i} block={b} config={config} phaseIndex={phaseIdx} prevInner={prevInner} />
+                  return <BlockView key={i} block={b} config={config} phaseIndex={phaseIndex} prevInner={prevInner} />
                 })
               })()}
               {running && (
@@ -321,7 +325,7 @@ export default function Home() {
               )}
               {state.status === 'done' && (
                 <div className="rounded-xl border border-neutral-900 bg-neutral-900 px-5 py-4 text-center text-white">
-                  <div className="text-[15px] font-bold">运行完成</div>
+                  <div className="text-[15px] font-bold">运行完成 · {state.terminalState ?? 'PROVISIONAL'}</div>
                   <div className="mt-1 text-[12.5px] text-neutral-400">
                     共 {state.ledger.calls} 次 LLM 调用 · {state.ledger.total_tokens.toLocaleString()} tokens
                   </div>
@@ -341,7 +345,7 @@ export default function Home() {
             </div>
             {/* 右侧指标栏 */}
             <aside className="lg:sticky lg:top-[68px] lg:self-start">
-              <MetricsPanel metrics={state.metrics} ledger={state.ledger} />
+              <MetricsPanel metrics={state.metrics} ledger={state.ledger} terminalState={state.terminalState} terminalReport={state.terminalReport} eventEvaluations={state.eventEvaluations} modelInvocations={state.modelInvocations} runTrace={state.runTrace} />
             </aside>
           </div>
         </main>
@@ -362,22 +366,36 @@ export default function Home() {
 
 function AgentConfigPanel({
   config,
+  baseConfig,
   onConfirm,
   onCancel,
 }: {
   config: ScenarioConfig
-  onConfirm: () => void
+  baseConfig: LLMConfig | null
+  onConfirm: (config: AgentLLMConfig | undefined) => void
   onCancel: () => void
 }) {
   const [mode, setMode] = useState<'shared' | 'per_agent'>('shared')
-  const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, string>>({})
-  const [sharedModel, setSharedModel] = useState(LLM_PRESETS[0].model)
+  const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, string>>(() =>
+    Object.fromEntries(config.agents.map((agent) => [agent.id, baseConfig?.model ?? LLM_PRESETS[0].model])),
+  )
+  const [sharedModel, setSharedModel] = useState(baseConfig?.model ?? LLM_PRESETS[0].model)
+  const modelChoices = [...new Set([baseConfig?.model, ...LLM_PRESETS.map((preset) => preset.model)].filter((model): model is string => Boolean(model)))]
 
-  useEffect(() => {
-    const init: Record<string, string> = {}
-    config.agents.forEach((a) => { init[a.id] = LLM_PRESETS[0].model })
-    setPerAgentConfigs(init)
-  }, [config])
+  const configForModel = (model: string): LLMConfig | undefined => {
+    if (!baseConfig) return undefined
+    return { ...baseConfig, model }
+  }
+
+  const confirm = () => {
+    if (!baseConfig) return onConfirm(undefined)
+    if (mode === 'shared') return onConfirm({ mode, shared: configForModel(sharedModel) })
+    const perAgent = Object.fromEntries(config.agents.flatMap((agent) => {
+      const selected = configForModel(perAgentConfigs[agent.id] ?? baseConfig.model)
+      return selected ? [[agent.id, selected]] : []
+    }))
+    onConfirm({ mode, shared: baseConfig, per_agent: perAgent })
+  }
 
   return (
     <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
@@ -428,9 +446,9 @@ function AgentConfigPanel({
                   onChange={(e) => setPerAgentConfigs((prev) => ({ ...prev, [a.id]: e.target.value }))}
                   className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] text-neutral-800 outline-none focus:border-neutral-900"
                 >
-                  {LLM_PRESETS.map((p) => (
-                    <option key={p.model} value={p.model}>
-                      {p.name} · {p.model}
+                  {modelChoices.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
                     </option>
                   ))}
                 </select>
@@ -448,9 +466,9 @@ function AgentConfigPanel({
             onChange={(e) => setSharedModel(e.target.value)}
             className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-800 outline-none focus:border-neutral-900"
           >
-            {LLM_PRESETS.map((p) => (
-              <option key={p.model} value={p.model}>
-                {p.name} · {p.model}
+            {modelChoices.map((model) => (
+              <option key={model} value={model}>
+                {model}
               </option>
             ))}
           </select>
@@ -459,10 +477,10 @@ function AgentConfigPanel({
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <span className="text-[11px] text-neutral-400">
-          {mode === 'shared' ? `所有 Agent 使用统一模型` : `${Object.keys(perAgentConfigs).length} 个 Agent 分别指定模型`}
+          {mode === 'shared' ? `所有 Agent 使用统一模型` : `${Object.keys(perAgentConfigs).length} 个 Agent 分别指定模型`} · 共用当前 API 端点与 Key
         </span>
         <button
-          onClick={onConfirm}
+          onClick={confirm}
           className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700"
         >
           确认并启动议事

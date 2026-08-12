@@ -30,15 +30,52 @@ export interface TaskProfile {
   reasoning: string // Dispatcher 的分类理由（展示用）
 }
 
-// ============ 原子策略 A/B/C/D/E ============
+// ============ 最终框架 · 五维 20 项 Base Strategy ============
+
+export type ParticipationStrategy = 'A1' | 'A2' | 'A3' | 'A4'
+export type InformationStrategy = 'B1' | 'B2' | 'B3'
+export type ThinkingStrategy = 'C1' | 'C2' | 'C3' | 'C4' | 'C5'
+export type OutputStrategy = 'D1' | 'D2' | 'D3'
+export type TransitionStrategy = 'E1' | 'E2' | 'E3' | 'E4' | 'E5'
+export type BaseStrategyId = ParticipationStrategy | InformationStrategy | ThinkingStrategy | OutputStrategy | TransitionStrategy
+
+export interface PhasePolicy {
+  A: ParticipationStrategy
+  B: InformationStrategy
+  C: ThinkingStrategy
+  D: OutputStrategy
+  E: TransitionStrategy
+}
+
+export type ModifierKind =
+  | 'communication_mode'
+  | 'topic_filter'
+  | 'anonymous_submission'
+  | 'hierarchical_reporting'
+  | 'minority_seat_required'
+  | 'evidence_priority'
+  | 'speaking_quota'
+  | 'outer_ring_observer'
+  | 'independent_commit'
+
+export interface PolicyModifier {
+  id: string
+  kind: ModifierKind
+  config: Record<string, unknown>
+}
+
+/**
+ * UI 兼容投影。内核不再用数组表达同族 Base 叠加；A/E 最多各包含一个值。
+ * 等前端获批迁移后可直接展示 PhasePolicy + modifiers。
+ */
 
 export interface StrategyCombo {
-  A: string[] // 发言者选择：A1 配额 / A2 层级 / A3 全体 / A4 指定对抗 / A5 私下沟通
-  B: string // 信息路由：B1 全量 / B2 摘要 / B3 角色约束 / B4 框架约束 / B5 角色权限
-  C: string // 思维模式：C1 自由 / C2 立场制 / C3 帽制 / C4 对抗制 / C5 Delphi
-  D: string // 输出格式：D1 自由文本 / D2 结构化工件 / D3 置信度工件
-  E: string[] // 状态转换：E1 固定轮次 / E2 收敛检测 / E3 对抗循环 / E4 时序循环 / E7 投票决议
-  notes: string[] // 自动推断与叠加说明（展示用）
+  A: string[]
+  B: string
+  C: string
+  D: string
+  E: string[]
+  notes: string[]
 }
 
 // ============ Agent ============
@@ -52,9 +89,28 @@ export interface AgentCard {
   stance: string
   can_say: string[]
   cannot_say: string[]
-  private_info?: string // B5 / 博弈扩展：仅自己可见的信息（狼人杀身份等）
+  private_info?: string // B3 角色路由下仅自己可见的信息
   secret_role?: string // werewolf extension
   team?: string
+  capabilities?: string[]
+  tools?: string[]
+  authority?: AgentAuthority
+  sop?: string[]
+  visibility?: string[]
+}
+
+export interface AgentAuthority {
+  can_recommend: boolean
+  can_approve: boolean
+  can_block_on_violation: boolean
+}
+
+export interface AgentContract extends AgentCard {
+  capabilities: string[]
+  tools: string[]
+  authority: AgentAuthority
+  sop: string[]
+  visibility: string[]
 }
 
 // ============ 阶段与条件边 ============
@@ -70,9 +126,271 @@ export interface Phase {
   name: string
   purpose: string
   strategy: StrategyCombo
+  policy: PhasePolicy
+  modifiers: PolicyModifier[]
+  protocol_id: string
   kind: 'speak' | 'aggregate' | 'score' | 'analyze' | 'fishbowl' | 'propose' | 'evaluate' | 'game_night' | 'game_day' | 'vote' | 'report'
   config: Record<string, unknown>
+  depends_on: string[]
+  required: boolean
+  skippable_on_deadline: boolean
+  entry_conditions: string[]
+  exit_conditions: string[]
+  failure_target?: string
   transitions: PhaseTransition[]
+}
+
+export interface PhaseGraph {
+  entry_phase_id: string
+  phases: Phase[]
+}
+
+export type ProtocolTemplateId = 'fishbowl_v1' | 'delphi_v1' | 'dialectical_review_v1' | 'roberts_rules_v1'
+
+export interface ProtocolTemplate {
+  id: ProtocolTemplateId
+  name: string
+  description: string
+  phases: Phase[]
+}
+
+export interface ScenarioSpec {
+  scenario_id: string
+  domain: string
+  objective: string
+  urgency: 'low' | 'medium' | 'high'
+  risk_level: 'low' | 'medium' | 'high' | 'critical'
+  reversibility: 'reversible' | 'partially_reversible' | 'irreversible'
+  stakeholders: string[]
+  required_capabilities: string[]
+  authority_map: Record<string, string[]>
+  known_facts: string[]
+  unknowns: string[]
+  hard_constraints: string[]
+  success_criteria: string[]
+}
+
+export interface IssueNode {
+  id: string
+  title: string
+  description: string
+  depends_on: string[]
+  stakeholder_ids: string[]
+  status: 'open' | 'resolved' | 'blocked'
+}
+
+export interface IssueGraph {
+  root_issue_id: string
+  issues: IssueNode[]
+}
+
+export interface GuardSet {
+  max_tokens: number
+  max_model_calls: number
+  hard_timeout_ms: number
+  soft_limit_ratio: number
+  reserved_finalization_ratio: number
+  human_authority_required: boolean
+  minority_report_required: boolean
+  mock_fallback_forbidden: boolean
+  mandatory_gates: string[]
+}
+
+export interface ProtocolContract {
+  id: string
+  version: string
+  entry_conditions: string[]
+  default_policy: PhasePolicy
+  modifiers: PolicyModifier[]
+  events: string[]
+  exit_conditions: string[]
+}
+
+export interface EventRule {
+  id: string
+  event: string
+  conditions: Record<string, unknown>
+  actions: string[]
+  retry_limit: number
+  on_unresolved: string
+}
+
+export type TerminalState = 'DECIDED' | 'PROVISIONAL' | 'IMPASSE' | 'WAITING_FOR_EVIDENCE' | 'HUMAN_ESCALATION' | 'ABORTED'
+
+export interface CompileRationale {
+  selected_protocol: string
+  reasons: string[]
+  alternatives: string[]
+  confidence: number
+  expected_model_calls: number
+  expected_token_range: [number, number]
+}
+
+export interface VersionedRecord {
+  id: string
+  version: number
+  created_at: string
+  created_by: string
+  source_refs: string[]
+  visibility: string[]
+  status: 'draft' | 'valid' | 'superseded' | 'rejected'
+}
+
+export type BlackboardRegister = 'facts' | 'claims' | 'evidence' | 'objections' | 'unknowns' | 'decisions' | 'artifacts'
+
+export interface BlackboardEntry extends VersionedRecord {
+  register: BlackboardRegister
+  issue_id: string
+  phase_id: string
+  payload: unknown
+}
+
+export interface ConflictRecord extends VersionedRecord {
+  issue_id: string
+  conflict_type: 'fact' | 'interest' | 'value' | 'procedure' | 'authority' | 'resource'
+  severity: number
+  decision_relevant: boolean
+  claim_refs: string[]
+  resolution_status: 'open' | 'resolved' | 'retained' | 'escalated'
+  resolution?: string
+}
+
+export interface PositionRevision extends VersionedRecord {
+  issue_id: string
+  agent_id: string
+  phase_id: string
+  position_before: string
+  position_after: string
+  reasoning_before_ref?: string
+  reasoning_after_ref?: string
+  revision_reason: string
+  cited_argument_ids: string[]
+  self_reported_trigger: string
+  confidence: number
+  causal_status: 'self_reported' | 'observed_correlation'
+}
+
+export interface ModelInvocation extends VersionedRecord {
+  phase_id: string
+  agent_id?: string
+  mode: 'live' | 'replay' | 'mock'
+  model: string
+  system_prompt: string
+  user_prompt: string
+  parameters: Record<string, unknown>
+  tokens: number
+  latency_ms: number
+  result_status: 'success' | 'error'
+  error?: string
+}
+
+export interface RunTraceEntry extends VersionedRecord {
+  run_id: string
+  phase_id: string
+  state: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  transition_reason: string
+  input_refs: string[]
+  output_refs: string[]
+}
+
+export interface ImpasseReport extends VersionedRecord {
+  decision_status: 'impasse'
+  impasse_type: ConflictRecord['conflict_type']
+  agreed_items: string[]
+  unresolved_claims: string[]
+  blocking_constraints: string[]
+  minority_positions: string[]
+  missing_evidence: string[]
+  attempted_resolutions: string[]
+  recommended_next_actions: string[]
+}
+
+export interface EventRuleEvaluation {
+  rule_id: string
+  event: string
+  matched: boolean
+  actions: string[]
+  reason: string
+  terminal_state?: TerminalState
+}
+
+export interface EvidenceSubmission {
+  id: string
+  issue_id: string
+  claim: string
+  source: string
+  observed_at: string
+  scope: string
+  confidence: number
+  verified: boolean
+}
+
+export interface GraphRecompileResult {
+  graph: PhaseGraph
+  reopened_issue_ids: string[]
+  inserted_phase_ids: string[]
+  reason: string
+}
+
+export type ExperimentArmKind = 'single_agent' | 'fixed_multi_agent' | 'orchestrated_multi_agent' | 'strategy_ablation'
+
+export interface ExperimentBudget {
+  max_tokens: number
+  max_model_calls: number
+  hard_timeout_ms: number
+}
+
+export interface ExperimentObservation {
+  quality: number
+  evidence_grounding: number
+  minority_retention: number
+  conflict_resolution: number
+  terminal_explainability: number
+  tokens: number
+  model_calls: number
+  elapsed_ms: number
+}
+
+export interface ExperimentArmResult {
+  arm_id: string
+  kind: ExperimentArmKind
+  protocol_id?: string
+  ablated_strategy?: BaseStrategyId
+  budget: ExperimentBudget
+  observation: ExperimentObservation
+  budget_compliant: boolean
+  normalized_score: number
+}
+
+export interface ExperimentReport {
+  experiment_id: string
+  scenario_id: string
+  equal_budget_verified: boolean
+  arms: ExperimentArmResult[]
+  winner_arm_id?: string
+  ablation_effects: Record<string, number>
+}
+
+export interface TransferScenario {
+  id: string
+  domain: 'community_governance' | 'enterprise_resource_allocation' | 'incident_response'
+  prompt: string
+  profile: TaskProfile
+  expected_protocols: ProtocolTemplateId[]
+  required_capabilities: string[]
+  expected_terminal_states: TerminalState[]
+}
+
+export interface TerminalReport extends VersionedRecord {
+  terminal_state: TerminalState
+  reason_codes: string[]
+  completed_phase_ids: string[]
+  skipped_phase_ids: string[]
+  unresolved_items: string[]
+  missing_evidence: string[]
+  minority_positions: string[]
+  recommended_next_actions: string[]
+  impasse_report?: ImpasseReport
 }
 
 // ============ ScenarioConfig（Scenario Compiler 输出） ============
@@ -85,6 +403,15 @@ export interface ScenarioConfig {
   strategy: StrategyCombo
   agents: AgentCard[]
   phases: Phase[]
+  scenario_spec: ScenarioSpec
+  issue_graph: IssueGraph
+  agent_contracts: AgentContract[]
+  phase_graph: PhaseGraph
+  guards: GuardSet
+  protocol: ProtocolContract
+  event_rules: EventRule[]
+  terminal_states: TerminalState[]
+  compile_rationale: CompileRationale
   case_context: string
   hard_constraints: string[]
   exam_blueprint?: ExamBlueprint
@@ -223,7 +550,7 @@ export interface WerewolfSpeech {
   phase: 'night' | 'day'
   round: number
   agent_id: string
-  audience: 'private' | 'public' // A5 私聊 / 公开
+  audience: 'private' | 'public' // communication_mode Modifier
   content: string
 }
 
@@ -234,7 +561,7 @@ export interface WerewolfAction {
   action: 'kill' | 'check' | 'save' | 'poison' | 'vote' | 'eliminate' | 'reveal'
   target?: string
   result: string
-  visible_to: string[] // B5 权限：哪些角色可见此信息
+  visible_to: string[] // B3 角色路由：哪些角色可见此信息
 }
 
 // ============ Observer 指标 ============
@@ -279,7 +606,11 @@ export type EngineEvent =
   | { t: 'final_proposal'; proposal: FinalProposal }
   | { t: 'report'; markdown: string }
   | { t: 'ledger'; total_tokens: number; calls: number; by_phase: Record<string, number> }
-  | { t: 'run_done'; elapsed_ms: number }
+  | { t: 'audit_snapshot'; model_invocations: ModelInvocation[]; run_trace?: RunTraceEntry[] }
+  | { t: 'event_rule_fired'; evaluation: EventRuleEvaluation }
+  | { t: 'impasse_report'; report: ImpasseReport }
+  | { t: 'terminal_report'; report: TerminalReport }
+  | { t: 'run_done'; elapsed_ms: number; terminal_state?: TerminalState }
   | { t: 'error'; message: string }
 
 export type Artifact =

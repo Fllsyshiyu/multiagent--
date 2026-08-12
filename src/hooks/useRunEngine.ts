@@ -4,8 +4,8 @@
  */
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type {
-  Artifact, EngineEvent, ExamBlueprint, ExamResult, FinalProposal, LLMConfig,
-  MetricsSnapshot, StrategyCombo, TaskType,
+  AgentLLMConfig, Artifact, EngineEvent, ExamBlueprint, ExamResult, FinalProposal, LLMConfig,
+  EventRuleEvaluation, ImpasseReport, MetricsSnapshot, ModelInvocation, RunTraceEntry, StrategyCombo, TaskType, TerminalReport, TerminalState,
 } from '../engine/types'
 import { createLLMCaller } from '../engine/llm'
 import { createScriptedCaller, type ScriptData } from '../engine/scripted'
@@ -48,6 +48,12 @@ export interface RunState {
   examResult: ExamResult | null
   finalProposal: FinalProposal | null
   artifactFeed: { artifact: Artifact; agent_id?: string }[]
+  modelInvocations: ModelInvocation[]
+  runTrace: RunTraceEntry[]
+  terminalState: TerminalState | null
+  terminalReport: TerminalReport | null
+  impasseReport: ImpasseReport | null
+  eventEvaluations: EventRuleEvaluation[]
 }
 
 const initialState: RunState = {
@@ -61,6 +67,12 @@ const initialState: RunState = {
   examResult: null,
   finalProposal: null,
   artifactFeed: [],
+  modelInvocations: [],
+  runTrace: [],
+  terminalState: null,
+  terminalReport: null,
+  impasseReport: null,
+  eventEvaluations: [],
 }
 
 export function useRunEngine() {
@@ -101,17 +113,34 @@ export function useRunEngine() {
   )
 
   const start = useCallback(
-    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack; prepared?: PreparedRun }) => {
+    async (input: string, opts: {
+      llm?: LLMConfig | null
+      agentLLM?: AgentLLMConfig
+      script?: ScriptData | null
+      forceTrack?: ForceTrack
+      prepared?: PreparedRun
+    }) => {
       const runId = ++runIdRef.current
-      setState({ ...initialState, status: 'running' })
+      const preparedInvocations = opts.prepared?.modelInvocations ?? []
+      setState({ ...initialState, status: 'running', modelInvocations: preparedInvocations })
       const caller = opts.llm
         ? createLLMCaller(opts.llm)
         : createScriptedCaller(opts.script!)
+      const perAgentCallers = new Map<string, ReturnType<typeof createLLMCaller>>()
+      if (opts.agentLLM?.mode === 'per_agent') {
+        for (const [agentId, config] of Object.entries(opts.agentLLM.per_agent ?? {})) {
+          perAgentCallers.set(agentId, createLLMCaller(config))
+        }
+      }
+      const sharedCaller = opts.agentLLM?.shared ? createLLMCaller(opts.agentLLM.shared) : undefined
+      const callerForAgent = opts.llm
+        ? (agentId?: string) => (agentId ? perAgentCallers.get(agentId) : undefined) ?? sharedCaller
+        : undefined
       const guardedApply = (e: EngineEvent) => {
         if (runId === runIdRef.current) apply(e)
       }
       try {
-        await runInput(input, caller, guardedApply, { forceTrack: opts.forceTrack, prepared: opts.prepared })
+        await runInput(input, caller, guardedApply, { forceTrack: opts.forceTrack, prepared: opts.prepared, callerForAgent })
       } catch (err) {
         guardedApply({ t: 'error', message: err instanceof Error ? err.message : String(err) })
       }
@@ -141,9 +170,17 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
     }
     return null
   }
+  const updateLastPhase = (update: (phase: PhaseBlock) => PhaseBlock) => {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i]
+      if (block.kind === 'phase') {
+        blocks[i] = { kind: 'phase', phase: update(block.phase) }
+        return
+      }
+    }
+  }
   const pushPhaseItem = (item: PhaseItem) => {
-    const p = lastPhase()
-    if (p) p.items = [...p.items, item]
+    updateLastPhase((phase) => ({ ...phase, items: [...phase.items, item] }))
   }
 
   switch (e.t) {
@@ -167,27 +204,29 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
       blocks.push({ kind: 'track', track: e.track, reason: e.reason })
       break
     case 'compile_step': {
-      let b = blocks.find((x) => x.kind === 'compile') as Extract<Block, { kind: 'compile' }> | undefined
-      if (!b) {
-        b = { kind: 'compile', steps: [] }
-        blocks.push(b)
-      }
-      if (!b.steps.some((s) => s.step === e.step && s.name === e.name)) {
-        b.steps = [...b.steps, { step: e.step, name: e.name, detail: e.detail, tokens: e.tokens }]
+      const i = blocks.findIndex((block) => block.kind === 'compile')
+      if (i < 0) {
+        blocks.push({ kind: 'compile', steps: [{ step: e.step, name: e.name, detail: e.detail, tokens: e.tokens }] })
+      } else {
+        const block = blocks[i]
+        if (block.kind === 'compile' && !block.steps.some((step) => step.step === e.step && step.name === e.name)) {
+          blocks[i] = { ...block, steps: [...block.steps, { step: e.step, name: e.name, detail: e.detail, tokens: e.tokens }] }
+        }
       }
       break
     }
     case 'compile_done': {
-      const b = blocks.find((x) => x.kind === 'compile') as Extract<Block, { kind: 'compile' }> | undefined
-      if (b) b.config = e.config
+      const i = blocks.findIndex((block) => block.kind === 'compile')
+      const block = blocks[i]
+      if (block?.kind === 'compile') blocks[i] = { ...block, config: e.config }
       break
     }
     case 'phase_start':
       blocks.push({ kind: 'phase', phase: { id: e.phase_id, name: e.name, purpose: e.purpose, strategy: e.strategy, done: false, items: [] } })
       break
     case 'phase_done': {
-      const p = lastPhase()
-      if (p && p.id === e.phase_id) p.done = true
+      const phase = lastPhase()
+      if (phase?.id === e.phase_id) updateLastPhase((current) => ({ ...current, done: true }))
       break
     }
     case 'agent_start':
@@ -212,6 +251,19 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
       return { ...prev, blocks, metrics: e.snapshot }
     case 'ledger':
       return { ...prev, blocks, ledger: { total_tokens: e.total_tokens, calls: e.calls, by_phase: e.by_phase } }
+    case 'audit_snapshot':
+      return {
+        ...prev,
+        blocks,
+        modelInvocations: e.model_invocations,
+        runTrace: e.run_trace ?? prev.runTrace,
+      }
+    case 'event_rule_fired':
+      return { ...prev, blocks, eventEvaluations: [...prev.eventEvaluations, e.evaluation] }
+    case 'impasse_report':
+      return { ...prev, blocks, impasseReport: e.report }
+    case 'terminal_report':
+      return { ...prev, blocks, terminalReport: e.report }
     case 'exam_frozen':
       pushPhaseItem({ kind: 'exam_frozen', data: e })
       return { ...prev, blocks, examBlueprint: e.blueprint }
@@ -233,7 +285,7 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
       blocks.push({ kind: 'error', message: e.message })
       return { ...prev, blocks, status: 'error' }
     case 'run_done':
-      return { ...prev, blocks, status: 'done' }
+      return { ...prev, blocks, status: 'done', terminalState: e.terminal_state ?? 'PROVISIONAL' }
   }
   return { ...prev, blocks }
 }

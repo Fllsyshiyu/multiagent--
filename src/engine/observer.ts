@@ -51,6 +51,20 @@ export class Observer {
     this.consensus.push(value)
   }
 
+  hasConverged(k = 2, threshold = 0.08): boolean {
+    if (this.consensus.length < k + 1) return false
+    const recent = this.consensus.slice(-(k + 1))
+    return recent.slice(1).every((value, index) => Math.abs(value - recent[index]) <= threshold)
+  }
+
+  hasLowChange(k = 2, threshold = 0.08): boolean {
+    return this.hasConverged(k, threshold)
+  }
+
+  consensusTrend(): number[] {
+    return [...this.consensus]
+  }
+
   flag(anomaly: string) {
     if (!this.anomalies.includes(anomaly)) this.anomalies.push(anomaly)
   }

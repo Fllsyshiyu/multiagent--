@@ -44,7 +44,7 @@ export const DEMO_EXAM: ExamBlueprint | null = null
 
 export function createScriptedCaller(script: ScriptData): LLMCaller {
   const json = (obj: unknown, base = 420) =>
-    Promise.resolve({ text: JSON.stringify(obj), tokens: base + Math.ceil(JSON.stringify(obj).length / 6) })
+    Promise.resolve({ text: JSON.stringify(obj), tokens: base + Math.ceil(JSON.stringify(obj).length / 6), invocation: { mode: 'replay' as const, model: 'scripted-replay', latency_ms: 0, result_status: 'success' as const } })
 
   return async (system: string, user: string): Promise<{ text: string; tokens: number }> => {
     const nameMatch = system.match(/「(.+?)」/)
@@ -111,7 +111,7 @@ export function createScriptedCaller(script: ScriptData): LLMCaller {
     if (system.includes('主观题阅卷官')) return json(script.exam_subjective ?? {}, 650)
     // 单 Agent
     if (system.includes('直接、可靠的助手')) {
-      return Promise.resolve({ text: script.single_answer ?? '好的。', tokens: 260 })
+      return Promise.resolve({ text: script.single_answer ?? '好的。', tokens: 260, invocation: { mode: 'replay', model: 'scripted-replay', latency_ms: 0, result_status: 'success' } })
     }
     // ---- 狼人杀 ----
     const ww = script.werewolf

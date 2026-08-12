@@ -1,7 +1,7 @@
 /**
  * Observer 指标 + TokenLedger 成本面板
  */
-import type { MetricsSnapshot } from '../engine/types'
+import type { EventRuleEvaluation, MetricsSnapshot, ModelInvocation, RunTraceEntry, TerminalReport, TerminalState } from '../engine/types'
 import { Chip } from './common'
 
 function MetricRow({ label, value, hint, warn = false }: { label: string; value: string; hint?: string; warn?: boolean }) {
@@ -15,7 +15,15 @@ function MetricRow({ label, value, hint, warn = false }: { label: string; value:
 
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`
 
-export function MetricsPanel({ metrics, ledger }: { metrics: MetricsSnapshot | null; ledger: { total_tokens: number; calls: number; by_phase: Record<string, number> } }) {
+export function MetricsPanel({ metrics, ledger, terminalState, terminalReport, eventEvaluations, modelInvocations, runTrace }: {
+  metrics: MetricsSnapshot | null
+  ledger: { total_tokens: number; calls: number; by_phase: Record<string, number> }
+  terminalState?: TerminalState | null
+  terminalReport?: TerminalReport | null
+  eventEvaluations?: EventRuleEvaluation[]
+  modelInvocations?: ModelInvocation[]
+  runTrace?: RunTraceEntry[]
+}) {
   return (
     <div className="space-y-4">
       {/* Token 账本 */}
@@ -42,6 +50,46 @@ export function MetricsPanel({ metrics, ledger }: { metrics: MetricsSnapshot | n
             )
           })}
         </div>
+      </div>
+
+      {/* Runtime audit */}
+      <div className="rounded-xl border border-neutral-200 bg-white p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-[13px] font-bold text-neutral-900">Runtime Audit</span>
+          <Chip tone={terminalState === 'DECIDED' ? 'green' : terminalState === 'ABORTED' ? 'red' : 'gray'}>{terminalState ?? 'RUNNING'}</Chip>
+        </div>
+        <div className="mt-1.5 divide-y divide-neutral-50">
+          <MetricRow label="模型调用审计" value={String(modelInvocations?.length ?? 0)} />
+          <MetricRow label="阶段轨迹记录" value={String(runTrace?.length ?? 0)} />
+          <MetricRow label="事件规则触发" value={String(eventEvaluations?.filter((item) => item.matched).length ?? 0)} />
+          <MetricRow label="未解决事项" value={String(terminalReport?.unresolved_items.length ?? 0)} warn={Boolean(terminalReport?.unresolved_items.length)} />
+          <MetricRow label="缺失证据" value={String(terminalReport?.missing_evidence.length ?? 0)} warn={Boolean(terminalReport?.missing_evidence.length)} />
+          <MetricRow label="保留少数意见" value={String(terminalReport?.minority_positions.length ?? 0)} />
+          <MetricRow label="失败调用" value={String(modelInvocations?.filter((item) => item.result_status === 'error').length ?? 0)} warn={Boolean(modelInvocations?.some((item) => item.result_status === 'error'))} />
+        </div>
+        {(modelInvocations?.length ?? 0) > 0 && (
+          <div className="mt-2 space-y-1">
+            {Object.entries((modelInvocations ?? []).reduce<Record<string, ModelInvocation[]>>((groups, item) => {
+              ;(groups[item.model] ??= []).push(item)
+              return groups
+            }, {})).map(([model, items]) => (
+              <div key={model} className="flex items-center justify-between text-[11px] text-neutral-400">
+                <span className="truncate">{model}</span>
+                <span className="font-mono">{items.length} calls</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(runTrace?.length ?? 0) > 0 && (
+          <div className="mt-3 border-t border-neutral-50 pt-2">
+            {runTrace?.filter((item) => item.state === 'completed' || item.state === 'failed').slice(-5).map((item) => (
+              <div key={item.id} className="flex items-center justify-between py-0.5 text-[11px]">
+                <span className="truncate font-mono text-neutral-500">{item.phase_id}</span>
+                <span className={item.state === 'failed' ? 'text-red-600' : 'text-neutral-400'}>{item.state}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Observer */}
