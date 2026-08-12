@@ -25,6 +25,105 @@ function parsePlayerCount(userInput: string): number | null {
   return match ? Number(match[1]) : null
 }
 
+const VALID_PRIMITIVES: GamePrimitive[] = [
+  'assign_roles', 'private_chat', 'select_target', 'inspect_role', 'mark_dead', 'revive',
+  'poison', 'decide_life', 'public_speech', 'vote', 'resolve_night', 'resolve_vote', 'judge_winner',
+]
+
+const VALID_PHASE_KINDS = ['setup', 'action', 'speak', 'vote', 'end'] as const
+
+function asNonEmptyArray<T>(value: unknown, name: string): T[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`GameSpec 缺少有效的 ${name} 数组`)
+  }
+  return value as T[]
+}
+
+/** 对 LLM 生成的 GameSpec 做运行时归一化与校验，缺字段补默认，结构性错误明确抛出。 */
+export function normalizeGameSpec(raw: unknown): GameSpec {
+  if (!raw || typeof raw !== 'object') throw new Error('LLM 未返回有效的 GameSpec 对象')
+  const input = raw as Record<string, unknown>
+  const roles = asNonEmptyArray(input.roles, 'roles').map((item) => {
+    const role = item as Record<string, unknown>
+    return {
+      id: String(role.id ?? 'role'),
+      name: String(role.name ?? role.id ?? '角色'),
+      team: String(role.team ?? 'neutral'),
+      description: String(role.description ?? ''),
+      actions: Array.isArray(role.actions) ? role.actions.map(String) : [],
+    }
+  })
+  const actions = asNonEmptyArray(input.actions, 'actions').map((item) => {
+    const action = item as Record<string, unknown>
+    const primitive = action.primitive as GamePrimitive
+    if (!VALID_PRIMITIVES.includes(primitive)) {
+      throw new Error(`GameSpec 动作原语不合法：${String(action.primitive)}`)
+    }
+    return {
+      id: String(action.id ?? 'action'),
+      name: String(action.name ?? action.id ?? '动作'),
+      primitive,
+      role: String(action.role ?? 'all'),
+      audience: String(action.audience ?? 'public') as GameActionSpec['audience'],
+      prompt: String(action.prompt ?? '请执行你的游戏动作。'),
+      output_schema: String(action.output_schema ?? '{}'),
+      effect: (action.effect as Record<string, string>) ?? {},
+    }
+  })
+  const compositionRaw = (input.composition ?? {}) as Record<string, unknown>
+  const composition = {
+    fixed: Array.isArray(compositionRaw.fixed) ? compositionRaw.fixed : [],
+    ratio: Array.isArray(compositionRaw.ratio) ? compositionRaw.ratio : [],
+    fill_role: String(compositionRaw.fill_role ?? roles[roles.length - 1]?.id ?? 'role'),
+  } as GameSpec['composition']
+  const phases = asNonEmptyArray(input.phases, 'phases').map((item) => {
+    const phase = item as Record<string, unknown>
+    const kind = phase.kind as typeof VALID_PHASE_KINDS[number]
+    if (!VALID_PHASE_KINDS.includes(kind)) throw new Error(`GameSpec 阶段类型不合法：${String(phase.kind)}`)
+    const policyRaw = (phase.policy ?? {}) as Record<string, unknown>
+    return {
+      id: String(phase.id ?? 'phase'),
+      name: String(phase.name ?? phase.id ?? '阶段'),
+      purpose: String(phase.purpose ?? ''),
+      kind,
+      participants: (phase.participants ?? 'all') as 'all' | 'all_alive' | string[],
+      actions: Array.isArray(phase.actions) ? phase.actions.map(String) : [],
+      policy: {
+        A: (policyRaw.A as 'A1') ?? 'A1',
+        B: (policyRaw.B as 'B1') ?? 'B1',
+        C: (policyRaw.C as 'C1') ?? 'C1',
+        D: (policyRaw.D as 'D1') ?? 'D1',
+        E: (policyRaw.E as 'E1') ?? 'E1',
+      },
+      order: (phase.order ?? 'sequential') as 'sequential' | 'simultaneous',
+      round: typeof phase.round === 'number' ? phase.round : undefined,
+    }
+  })
+  return {
+    game_type: String(input.game_type ?? 'unknown'),
+    name: String(input.name ?? input.game_type ?? '博弈游戏'),
+    description: String(input.description ?? ''),
+    min_players: Number(input.min_players ?? 2),
+    max_players: Number(input.max_players ?? 20),
+    roles,
+    actions,
+    composition,
+    phases,
+    win_conditions: asNonEmptyArray(input.win_conditions, 'win_conditions').map((item) => {
+      const condition = item as Record<string, unknown>
+      return {
+        id: String(condition.id ?? 'win'),
+        description: String(condition.description ?? ''),
+        type: (condition.type ?? 'llm') as GameWinConditionSpec['type'],
+        role: condition.role ? String(condition.role) : undefined,
+        team_a: condition.team_a ? String(condition.team_a) : undefined,
+        team_b: condition.team_b ? String(condition.team_b) : undefined,
+      }
+    }),
+    fallback_rule: String(input.fallback_rule ?? ''),
+  }
+}
+
 /** 按 GameSpec.composition 生成角色列表。 */
 export function buildRoleList(spec: GameSpec, playerCount: number): string[] {
   const count = Math.max(spec.min_players, Math.min(spec.max_players, Math.floor(playerCount)))
@@ -102,6 +201,7 @@ export class GenericGameEngine {
   private caller: LLMCaller
   private emit: Emit
   private fast: boolean
+  private currentSpec: GameSpec | null = null
 
   constructor(caller: LLMCaller, emit: Emit, opts?: { fast?: boolean }) {
     this.caller = caller
@@ -115,6 +215,7 @@ export class GenericGameEngine {
 
   async run(spec: GameSpec, userInput: string, opts?: { playerCount?: number }): Promise<void> {
     const start = Date.now()
+    this.currentSpec = spec
     const players = buildPlayers(spec, userInput, opts?.playerCount)
     const state: GameState = {
       players,
@@ -247,7 +348,7 @@ export class GenericGameEngine {
         this.resolveVote(state)
         break
       case 'judge_winner':
-        this.runJudgeForState(state, null)
+        this.runJudgeForState(state, this.currentSpec)
         break
       case 'private_chat':
       case 'assign_roles':
@@ -262,7 +363,7 @@ export class GenericGameEngine {
       const poisonTarget = state.players.find((player) => player.id === state.pending_poison)
       if (poisonTarget) poisonTarget.alive = false
     }
-    this.runJudgeForState(state, null)
+    this.runJudgeForState(state, this.currentSpec)
   }
 
   private resolveVote(state: GameState) {
@@ -366,7 +467,7 @@ export async function generateGameSpec(caller: LLMCaller, userInput: string): Pr
     roles: [{ id: '<role_id>', name: '<角色名>', team: '<阵营>', description: '<能力说明>', actions: ['<action_id>'] }],
     actions: [{ id: '<action_id>', name: '<动作名>', primitive: '<见下方原语>', role: '<角色或all>', audience: 'self|team|public|god', prompt: '<给Agent的指令>', output_schema: '<JSON schema>' }],
     composition: { fixed: [], ratio: [], fill_role: '<角色id>' },
-    phases: [{ id: '<phase_id>', name: '<阶段名>', kind: 'setup|action|speak|vote|end', participants: 'all|all_alive|["role"]', actions: ['<action_id>'], policy: { A: 'A1', B: 'B1', C: 'C1', D: 'D1', E: 'E1' }, order: 'sequential' }],
+    phases: [{ id: '<phase_id>', name: '<阶段名>', purpose: '<阶段目的>', kind: 'setup|action|speak|vote|end', participants: 'all|all_alive|["role"]', actions: ['<action_id>'], policy: { A: 'A1', B: 'B1', C: 'C1', D: 'D1', E: 'E1' }, order: 'sequential' }],
     win_conditions: [{ id: '<win_id>', description: '<胜负条件>', type: 'role_eliminated|team_ge|llm' }],
     fallback_rule: '<无法判定时的兜底规则>',
   })
@@ -376,5 +477,5 @@ export async function generateGameSpec(caller: LLMCaller, userInput: string): Pr
     `用户输入：${userInput}\n\n输出 GameSpec JSON，格式：\n${schema}`,
     (attempt) => { void attempt },
   )
-  return data
+  return normalizeGameSpec(data)
 }
