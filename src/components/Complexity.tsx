@@ -6,17 +6,17 @@ const LEVEL_STYLE: Record<number, string> = {
   1: 'bg-emerald-500', 2: 'bg-lime-500', 3: 'bg-amber-500', 4: 'bg-orange-500', 5: 'bg-red-500',
 }
 
-export function ComplexityBlock({ running, result }: { running: boolean; result?: ComplexityResult; tokens?: number; source?: 'distilbert' }) {
+export function ComplexityBlock({ running, result, tokens }: { running: boolean; result?: ComplexityResult; tokens?: number; source?: 'api' }) {
   const meta = result ? COMPLEXITY_LEVELS[result.complexity] : null
   return (
     <SectionCard>
       <BlockHeader
         index="0"
-        title="Query Complexity · 云端 DistilBERT 六维评估"
-        sub={running ? '正在调用云端 DistilBERT 计算六项复杂度指标…' : meta?.description}
+        title="Query Complexity · API Rubric 六维评估"
+        sub={running ? '正在调用配置的模型 API 按固定 Rubric 评估复杂度…' : meta?.description}
         right={running ? <Spinner /> : result ? (
           <Chip tone={result.model === 'fallback' ? 'amber' : 'green'}>
-            {result.model === 'fallback' ? '服务降级结果' : `云端模型 · ${result.latency_ms.toFixed(1)} ms`}
+            {result.model === 'fallback' ? 'API 降级结果' : `${tokens?.toLocaleString() ?? 0} tokens · ${result.latency_ms.toFixed(0)} ms`}
           </Chip>
         ) : undefined}
       />
@@ -28,8 +28,8 @@ export function ComplexityBlock({ running, result }: { running: boolean; result?
               <div className="text-[16px] font-bold text-neutral-900">Level {result.complexity} · {meta.name}</div>
               <div className="mt-1 text-[12px] text-neutral-500">
                 {result.model === 'fallback'
-                  ? '云端模型暂不可用，当前显示保守默认值'
-                  : `六项指标均由托管 DistilBERT 编码器计算 · 综合置信度 ${Math.round(result.confidence * 100)}%`}
+                  ? '模型 API 暂不可用，当前显示保守默认值'
+                  : `模型依据固定六维 Rubric 分析 · 综合置信度 ${Math.round(result.confidence * 100)}%`}
               </div>
             </div>
           </div>

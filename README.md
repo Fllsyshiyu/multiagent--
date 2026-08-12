@@ -2,14 +2,14 @@
 
 > 一套框架，议事与博弈通用。输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并附试卷评分；博弈游戏加载扩展复用同一套策略。**不为任何场景手写代码。**
 
-React 前端（TypeScript + Vite + Tailwind）部署在 GitHub Pages；Query Complexity 由公网托管的 DistilBERT 服务计算，访客无需下载模型。其余生成任务由浏览器直连用户自备的 OpenAI 兼容 LLM API。
+纯前端 React 应用（TypeScript + Vite + Tailwind）。Query Complexity 与其余生成任务共用用户在页面中配置的 OpenAI 兼容模型 API，无需额外分类服务或模型下载。
 
 ## 核心架构
 
 ```
 用户输入（一句话）
     │
-    ├── Query Complexity Classifier（云端托管小模型 + Rubric）→ Level 1-5
+    ├── Query Complexity Classifier（模型 API + 固定 Rubric）→ Level 1-5
     │
     ▼
 Dispatcher（一次 LLM 调用，~300 tokens）
@@ -29,12 +29,12 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 
 ## 五级 Query 复杂度
 
-`src/complexity/` 调用公网托管的 DistilBERT 服务，对任意任务输出六项 `0-4` 指标：推理深度、执行步骤、专业知识、工具依赖、协调复杂度和不确定性。最终 Level 1-5 由固定序数规则根据六项指标计算。
+`src/complexity/` 复用网站已配置的 OpenAI 兼容 API，要求模型按照固定 Rubric 输出六项 `0-4` 指标：推理深度、执行步骤、专业知识、工具依赖、协调复杂度和不确定性。最终 Level 1-5 仍由前端确定性规则计算。
 
-- 不调用生成式 LLM 进行复杂度打分
-- 访客只发送 Query 到托管推理服务，无需下载模型或启动 Python 服务
-- 不展示或使用 `no_llm / small_llm / large_llm` 三档
-- 不使用关键词经验规则补分
+- 不再依赖 DistilBERT、Hugging Face Space 或 Python 分类服务
+- Live 模式使用用户填写的 API 配置
+- 回放模式使用预录的六维评分，不产生网络调用
+- API 不可用时显示保守降级结果，不阻断主流程
 
 ## 原子策略族（19 项）
 
@@ -68,25 +68,9 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 
 ```bash
 npm install
-npm run dev       # 默认调用公网托管的 Query Complexity 服务
-npm run build     # 构建到 dist/
-
-# 可选：仅在开发托管服务本身时才需要
-npm run classifier:setup
-npm run classifier:dev
+npm run dev
+npm run build
 ```
-
-## Query Complexity 模型部署
-
-分类模型作为 Docker 服务部署到 Hugging Face Spaces，网站通过 HTTPS 调用，模型权重仅由托管服务端加载，不会下载到访客设备。仓库提供 `.github/workflows/deploy-classifier.yml` 自动发布：
-
-1. 在 Hugging Face 创建一个公开的 **Docker Space**，默认名称为 `query-complexity`。
-2. 在 GitHub 仓库 Secrets 添加 `HF_TOKEN`（需要该 Space 的写权限）。
-3. 如用户名或 Space 名不同，设置仓库 Variables：`HF_USERNAME`、`HF_SPACE_NAME`。
-4. 设置 `VITE_COMPLEXITY_ROUTER_URL` 为 Space 的公网地址；不设置时默认使用 `https://fllsyshiyu-query-complexity.hf.space`。
-5. 运行 **Deploy Query Complexity Model**，再重新运行 GitHub Pages 部署。
-
-生产环境不应把 Hugging Face Token 放进 `VITE_*` 变量或浏览器代码。
 
 ## 部署（GitHub Pages）
 
@@ -97,7 +81,7 @@ npm run classifier:dev
 
 ```
 src/
-├── complexity/        # 调用托管 DistilBERT，输出六维指标与 Level 1-5
+├── complexity/        # 模型 API + 固定 Rubric，输出六维指标与 Level 1-5
 ├── engine/            # MA-Collab 框架内核（与 UI 无关，可独立复用）
 │   ├── types.ts       #   统一数据契约（TaskProfile/策略/工件/事件流）
 │   ├── dispatcher.ts  #   一句话分类 + 30 格决策表 + 组合规则校验
@@ -112,8 +96,6 @@ src/
 ├── data/scripts/      # 四个预录剧本
 ├── components/        # 视图组件（鱼缸环形图/评分矩阵/试卷/狼人杀等）
 ├── hooks/             # 事件流归约 Hook
-services/
-└── query-complexity/  # FastAPI + DistilBERT 托管推理服务（Docker Space）
 ```
 
 ## 边界声明

@@ -64,7 +64,7 @@ export default function Home() {
       forceTrack: delibMode,
       prepared: {
         complexity: stagedComplexity?.kind === 'complexity' && stagedComplexity.result
-          ? { result: stagedComplexity.result, tokens: 0, source: 'distilbert' }
+          ? { result: stagedComplexity.result, tokens: 0, source: 'api' }
           : undefined,
         profile: state.stagedProfile ?? undefined,
         config: state.stagedConfig ?? undefined,

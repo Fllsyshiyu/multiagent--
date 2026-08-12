@@ -4,6 +4,7 @@
  * 只是 LLM 调用被替换为预录应答。与 Live 模式共用同一条数据契约。
  */
 import type { LLMCaller } from './llm'
+import type { ComplexityDimensions } from '../complexity'
 import type {
   AgentCard, CandidateProposal, ConflictMap, ExamBlueprint, FinalProposal,
   FishbowlSummaryCard, InitialAssessmentCard, ObjectionCard, OuterObservationCard,
@@ -11,6 +12,10 @@ import type {
 } from './types'
 
 export interface ScriptData {
+  complexity: {
+    dimensions: ComplexityDimensions
+    confidence?: number
+  }
   dispatch: TaskProfile
   single_answer?: string
   agents?: AgentCard[]
@@ -52,6 +57,16 @@ export function createScriptedCaller(script: ScriptData): LLMCaller {
     const idInSystem = system.match(/「.+?」（(p\d)）/)?.[1]
     const agentId = script.agents?.find((a) => a.name === name)?.id ?? idInSystem ?? ''
 
+    // Query Complexity rubric
+    if (system.includes('Query Complexity 评估器')) {
+      const confidence = script.complexity.confidence ?? 0.9
+      return json({
+        dimensions: Object.fromEntries(
+          Object.entries(script.complexity.dimensions).map(([key, score]) => [key, { score, confidence }]),
+        ),
+        confidence,
+      }, 320)
+    }
     // Dispatcher
     if (system.includes('MA-Collab 编排框架的 Dispatcher')) return json(script.dispatch, 380)
     // Agent Factory

@@ -5,6 +5,17 @@
 import type { ScriptData } from '../../engine/scripted'
 
 export const squareDanceScript: ScriptData = {
+  complexity: {
+    dimensions: {
+      reasoning_depth: 3,
+      step_count: 3,
+      domain_expertise: 2,
+      tool_dependency: 1,
+      coordination: 3,
+      uncertainty: 3,
+    },
+    confidence: 0.9,
+  },
   dispatch: {
     agent_count: 6,
     task_type: 'collaborative',

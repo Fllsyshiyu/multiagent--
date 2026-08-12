@@ -6,6 +6,17 @@
 import type { ScriptData } from '../../engine/scripted'
 
 export const werewolfScript: ScriptData = {
+  complexity: {
+    dimensions: {
+      reasoning_depth: 2,
+      step_count: 3,
+      domain_expertise: 1,
+      tool_dependency: 0,
+      coordination: 3,
+      uncertainty: 3,
+    },
+    confidence: 0.88,
+  },
   dispatch: {
     agent_count: 6,
     task_type: 'competitive',

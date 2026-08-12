@@ -256,7 +256,7 @@ export interface MetricsSnapshot {
 
 export type EngineEvent =
   | { t: 'complexity_start'; user_input: string }
-  | { t: 'complexity_done'; result: ComplexityResult; tokens: number; source: 'distilbert' }
+  | { t: 'complexity_done'; result: ComplexityResult; tokens: number; source: 'api' }
   | { t: 'dispatch_start'; user_input: string }
   | { t: 'dispatch_done'; profile: TaskProfile; tokens: number }
   | { t: 'track_decided'; track: TaskType; reason: string }
