@@ -5,7 +5,8 @@
 import { dispatch } from './dispatcher'
 import { compileScenario } from './compiler'
 import { OrchestrationEngine, type Emit } from './engine'
-import { WerewolfGame } from './werewolf'
+import { GAME_REGISTRY } from './game-specs'
+import { GenericGameEngine, generateGameSpec } from './game-engine'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
 import type { ForceTrack, ModelInvocation, ScenarioConfig, TaskProfile } from './types'
@@ -150,9 +151,19 @@ export async function runInput(
 
   // ---- 轨道二：博弈扩展 ----
   if (profile.task_type === 'competitive') {
-    emit({ t: 'track_decided', track: 'competitive', reason: `检测到博弈任务（game_type=${profile.game_type}）→ GameRegistry 加载扩展，复用通用策略，核心框架零改动` })
+    const gameType = profile.game_type ?? 'unknown'
+    emit({ t: 'track_decided', track: 'competitive', reason: `检测到博弈任务（game_type=${gameType}）→ GameSpec 动态装配，复用通用原子策略，不再枚举硬编码游戏` })
+    let gameSpec = GAME_REGISTRY[gameType]
+    if (!gameSpec) {
+      try {
+        gameSpec = await generateGameSpec(auditedCaller, userInput)
+        emit({ t: 'adaptation', trigger: `未在注册表找到博弈「${gameType}」`, action: '由通用规则编译器动态生成 GameSpec', scope: '博弈轨道' })
+      } catch (error) {
+        throw new Error(`无法为博弈「${gameType}」生成可执行规则：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     invocationAudit.setContext('competitive_game')
-    const game = new WerewolfGame(auditedCaller, (event) => {
+    const game = new GenericGameEngine(auditedCaller, (event) => {
       if (event.t === 'run_done') {
         const terminal = event.terminal_state ?? 'PROVISIONAL'
         emit({ t: 'terminal_report', report: createTerminalReport({ terminalState: terminal, trace: [{ phase_id: 'competitive_game', state: 'completed' }], reasonCodes: [`terminal:${terminal}`, 'competitive_game_complete'], unresolvedItems: [], missingEvidence: [], minorityPositions: [], recommendedNextActions: [] }) })
@@ -160,7 +171,7 @@ export async function runInput(
       }
       emit(event)
     })
-    await game.run(userInput)
+    await game.run(gameSpec, userInput, { playerCount: profile.agent_count })
     return
   }
 

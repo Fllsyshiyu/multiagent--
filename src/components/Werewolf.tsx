@@ -1,23 +1,24 @@
 /**
  * 狼人杀视图 · 上帝视角（观众可见全部身份与私聊）
  */
-import type { WerewolfAction, WerewolfSpeech } from '../engine/types'
+import type { WerewolfAction, WerewolfRosterEntry, WerewolfSpeech } from '../engine/types'
 import { Chip } from './common'
 
-export const WEREWOLF_PLAYERS: { id: string; name: string; role: string; roleLabel: string; team: 'wolf' | 'good' }[] = [
-  { id: 'p1', name: '沈默', role: 'werewolf', roleLabel: '狼人', team: 'wolf' },
-  { id: 'p2', name: '阿岚', role: 'werewolf', roleLabel: '狼人', team: 'wolf' },
-  { id: 'p3', name: '陆一', role: 'seer', roleLabel: '预言家', team: 'good' },
-  { id: 'p4', name: '苏叶', role: 'witch', roleLabel: '女巫', team: 'good' },
-  { id: 'p5', name: '老周', role: 'villager', roleLabel: '平民', team: 'good' },
-  { id: 'p6', name: '小满', role: 'villager', roleLabel: '平民', team: 'good' },
+export const WEREWOLF_PLAYERS: WerewolfRosterEntry[] = [
+  { id: 'p1', name: '沈默', role: 'werewolf', role_label: '狼人', team: 'wolf' },
+  { id: 'p2', name: '阿岚', role: 'werewolf', role_label: '狼人', team: 'wolf' },
+  { id: 'p3', name: '陆一', role: 'seer', role_label: '预言家', team: 'good' },
+  { id: 'p4', name: '苏叶', role: 'witch', role_label: '女巫', team: 'good' },
+  { id: 'p5', name: '老周', role: 'villager', role_label: '平民', team: 'good' },
+  { id: 'p6', name: '小满', role: 'villager', role_label: '平民', team: 'good' },
 ]
 
-function player(id: string) {
-  return WEREWOLF_PLAYERS.find((p) => p.id === id)
+function resolveRoster(roster?: WerewolfRosterEntry[]) {
+  return roster?.length ? roster : WEREWOLF_PLAYERS
 }
 
-export function WerewolfRoster({ dead = [] }: { dead?: string[] }) {
+export function WerewolfRoster({ dead = [], roster }: { dead?: string[]; roster?: WerewolfRosterEntry[] }) {
+  const players = resolveRoster(roster)
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-4">
       <div className="flex items-center justify-between">
@@ -25,12 +26,12 @@ export function WerewolfRoster({ dead = [] }: { dead?: string[] }) {
         <Chip tone="black">B3 角色路由 · 身份仅本人可见</Chip>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
-        {WEREWOLF_PLAYERS.map((p) => {
+        {players.map((p) => {
           const isDead = dead.includes(p.id)
           return (
             <div key={p.id} className={`rounded-lg border p-2.5 text-center transition-all ${isDead ? 'border-neutral-200 bg-neutral-100 opacity-40' : p.team === 'wolf' ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white'}`}>
               <div className={`text-[14px] font-bold ${isDead ? 'line-through' : ''}`}>{p.name}</div>
-              <div className={`mt-0.5 text-[11px] ${p.team === 'wolf' && !isDead ? 'text-neutral-300' : 'text-neutral-400'}`}>{p.roleLabel}</div>
+              <div className={`mt-0.5 text-[11px] ${p.team === 'wolf' && !isDead ? 'text-neutral-300' : 'text-neutral-400'}`}>{p.role_label}</div>
               <div className={`mt-1 font-mono text-[10px] ${p.team === 'wolf' && !isDead ? 'text-neutral-500' : 'text-neutral-300'}`}>{p.id}</div>
             </div>
           )
@@ -41,8 +42,9 @@ export function WerewolfRoster({ dead = [] }: { dead?: string[] }) {
   )
 }
 
-export function WerewolfSpeechBubble({ speech }: { speech: WerewolfSpeech }) {
-  const p = player(speech.agent_id)
+export function WerewolfSpeechBubble({ speech, roster }: { speech: WerewolfSpeech; roster?: WerewolfRosterEntry[] }) {
+  const players = resolveRoster(roster)
+  const p = players.find((player) => player.id === speech.agent_id)
   const isPrivate = speech.audience === 'private'
   return (
     <div className={`flex gap-2.5 ${isPrivate ? 'opacity-95' : ''}`}>
@@ -64,10 +66,11 @@ export function WerewolfSpeechBubble({ speech }: { speech: WerewolfSpeech }) {
   )
 }
 
-export function WerewolfActionLine({ action }: { action: WerewolfAction }) {
-  const p = player(action.actor)
+export function WerewolfActionLine({ action, roster }: { action: WerewolfAction; roster?: WerewolfRosterEntry[] }) {
+  const players = resolveRoster(roster)
+  const p = players.find((player) => player.id === action.actor)
   const label = { kill: '刀', check: '验', save: '救', poison: '毒', vote: '投', eliminate: '出局', reveal: '公告' }[action.action] ?? '·'
-  const audience = action.visible_to.includes('all') ? '全员可见' : `权限路由：${action.visible_to.filter((v) => v !== 'god').map((v) => player(v)?.name ?? v).join('、') || '系统'} 可见`
+  const audience = action.visible_to.includes('all') ? '全员可见' : `权限路由：${action.visible_to.filter((v) => v !== 'god').map((v) => players.find((player) => player.id === v)?.name ?? v).join('、') || '系统'} 可见`
   return (
     <div className="flex items-start gap-2.5 rounded-md bg-neutral-50 px-3 py-2">
       <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded bg-neutral-900 px-1 text-[10.5px] font-bold text-white">{label}</span>
@@ -79,7 +82,8 @@ export function WerewolfActionLine({ action }: { action: WerewolfAction }) {
   )
 }
 
-export function VoteTable({ votes, result }: { votes: { agent_id: string; vote: string; reason: string }[]; result?: string }) {
+export function VoteTable({ votes, result, roster }: { votes: { agent_id: string; vote: string; reason: string }[]; result?: string; roster?: WerewolfRosterEntry[] }) {
+  const players = resolveRoster(roster)
   const tally: Record<string, number> = {}
   votes.forEach((v) => (tally[v.vote] = (tally[v.vote] ?? 0) + 1))
   return (
@@ -91,9 +95,9 @@ export function VoteTable({ votes, result }: { votes: { agent_id: string; vote: 
       <div className="mt-3 space-y-1.5">
         {votes.map((v, i) => (
           <div key={i} className="flex items-center gap-2 text-[13px]">
-            <span className="w-16 font-medium text-neutral-800">{player(v.agent_id)?.name}</span>
+            <span className="w-16 font-medium text-neutral-800">{players.find((p) => p.id === v.agent_id)?.name}</span>
             <span className="text-neutral-400">→</span>
-            <span className={`font-semibold ${player(v.vote)?.team === 'wolf' ? 'text-neutral-900 underline decoration-2' : 'text-neutral-700'}`}>{player(v.vote)?.name}</span>
+            <span className={`font-semibold ${players.find((p) => p.id === v.vote)?.team === 'wolf' ? 'text-neutral-900 underline decoration-2' : 'text-neutral-700'}`}>{players.find((p) => p.id === v.vote)?.name}</span>
             <span className="truncate text-[12px] text-neutral-400">{v.reason}</span>
           </div>
         ))}

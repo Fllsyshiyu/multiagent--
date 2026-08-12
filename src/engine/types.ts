@@ -19,7 +19,7 @@ export type Verifiability = 'automatable' | 'partially' | 'subjective'
 export interface TaskProfile {
   agent_count: number
   task_type: TaskType
-  game_type: 'werewolf' | 'poker' | null
+  game_type: string | null
   domain: string
   time_pressure: TimePressure
   information_asymmetry: InfoAsymmetry
@@ -616,6 +616,14 @@ export interface WerewolfAction {
   visible_to: string[] // B3 角色路由：哪些角色可见此信息
 }
 
+export interface WerewolfRosterEntry {
+  id: string
+  name: string
+  role: string
+  role_label: string
+  team: 'wolf' | 'good'
+}
+
 // ============ Observer 指标 ============
 
 export interface MetricsSnapshot {
@@ -652,7 +660,7 @@ export type EngineEvent =
   | { t: 'exam_frozen'; blueprint: ExamBlueprint }
   | { t: 'exam_result'; result: ExamResult }
   | { t: 'game_event'; event: WerewolfAction | WerewolfSpeech }
-  | { t: 'game_state'; alive: string[]; dead: string[]; phase: string }
+  | { t: 'game_state'; alive: string[]; dead: string[]; phase: string; roster?: WerewolfRosterEntry[] }
   | { t: 'vote'; votes: { agent_id: string; vote: string; reason: string }[]; result: string }
   | { t: 'phase_done'; phase_id: string; name: string }
   | { t: 'final_proposal'; proposal: FinalProposal }

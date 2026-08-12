@@ -20,7 +20,7 @@ const DISPATCH_SYSTEM = `你是 MA-Collab 编排框架的 Dispatcher。你的任
 const DISPATCH_SCHEMA = `{
   "agent_count": <int>,
   "task_type": "single" | "collaborative" | "competitive",
-  "game_type": "werewolf" | "poker" | null,
+  "game_type": "<英文游戏标识，如 werewolf / poker / avalon / mafia；非博弈任务为 null>",
   "domain": "<领域，如 governance / disaster / business / game>",
   "time_pressure": "urgent" | "sustained" | "relaxed",
   "information_asymmetry": "high" | "medium" | "low",
@@ -51,8 +51,13 @@ export async function dispatch(
     data.reasoning = '【用户强制单 Agent 模式】' + data.reasoning
   } else if (forceTrack === 'multi') {
     if (data.agent_count <= 1) data.agent_count = 3
-    if (data.task_type !== 'competitive') data.task_type = 'collaborative'
-    data.game_type = null
+    if (data.task_type === 'single') {
+      data.task_type = 'collaborative'
+      data.game_type = null
+    } else if (data.task_type === 'collaborative') {
+      data.game_type = null
+    }
+    // competitive 保留原 game_type，避免出现 competitive + null 的无效组合
     data.reasoning = '【用户强制多 Agent 模式】' + data.reasoning
   } else {
     if (data.agent_count <= 1) data.task_type = 'single'

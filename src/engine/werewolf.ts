@@ -4,7 +4,7 @@
  * 扩展独有：淘汰、秘密角色分派、胜负判定
  * Demo 规模：6 人局（2狼 / 预言家 / 女巫 / 2平民），一个完整昼夜循环 + 复盘
  */
-import type { AgentCard, WerewolfAction, WerewolfSpeech } from './types'
+import type { AgentCard, WerewolfAction, WerewolfRosterEntry, WerewolfSpeech } from './types'
 import { callJSON, type LLMCaller } from './llm'
 import { TokenLedger } from './ledger'
 import type { Emit } from './engine'
@@ -23,16 +23,22 @@ const ROLE_INFO: Record<string, { team: string; desc: string }> = {
   villager: { team: '好人阵营', desc: '无特殊能力，通过发言与投票找出狼人' },
 }
 
-export function buildWerewolfPlayers(): Player[] {
-  const defs: [string, string, string][] = [
-    ['p1', '沈默', 'werewolf'],
-    ['p2', '阿岚', 'werewolf'],
-    ['p3', '陆一', 'seer'],
-    ['p4', '苏叶', 'witch'],
-    ['p5', '老周', 'villager'],
-    ['p6', '小满', 'villager'],
-  ]
-  return defs.map(([id, name, role]) => ({
+function roleName(role: string): string {
+  return { werewolf: '狼人', seer: '预言家', witch: '女巫', villager: '平民' }[role] ?? role
+}
+
+function toRoster(players: Player[]): WerewolfRosterEntry[] {
+  return players.map((p) => ({
+    id: p.id,
+    name: p.name,
+    role: p.secret_role ?? 'villager',
+    role_label: roleName(p.secret_role ?? 'villager'),
+    team: p.secret_role === 'werewolf' ? 'wolf' : 'good',
+  }))
+}
+
+function makePlayer(id: string, name: string, role: string): Player {
+  return {
     id,
     name,
     archetype: ROLE_INFO[role].team,
@@ -45,11 +51,41 @@ export function buildWerewolfPlayers(): Player[] {
     team: ROLE_INFO[role].team,
     private_info: `你的秘密身份是「${roleName(role)}」。${ROLE_INFO[role].desc}。`,
     alive: true,
-  }))
+  }
 }
 
-function roleName(role: string): string {
-  return { werewolf: '狼人', seer: '预言家', witch: '女巫', villager: '平民' }[role] ?? role
+const PRESET_SIX_PLAYERS: [string, string, string][] = [
+    ['p1', '沈默', 'werewolf'],
+    ['p2', '阿岚', 'werewolf'],
+    ['p3', '陆一', 'seer'],
+    ['p4', '苏叶', 'witch'],
+    ['p5', '老周', 'villager'],
+    ['p6', '小满', 'villager'],
+  ]
+
+/** 从用户输入提取明确的玩家数量，例如「12人」「8 人局」。 */
+function parsePlayerCount(userInput: string): number | null {
+  const match = userInput.match(/(\d+)\s*人/)
+  return match ? Number(match[1]) : null
+}
+
+/** 动态生成 count 名玩家。6 人局保持回放剧本完全兼容。 */
+export function buildWerewolfPlayers(count = 6): Player[] {
+  if (count === 6) {
+    return PRESET_SIX_PLAYERS.map(([id, name, role]) => makePlayer(id, name, role))
+  }
+  const safeCount = Math.max(6, Math.min(18, Math.floor(count)))
+  const wolfCount = Math.max(2, Math.floor(safeCount / 3))
+  const roles: string[] = []
+  for (let i = 0; i < wolfCount; i++) roles.push('werewolf')
+  roles.push('seer', 'witch')
+  while (roles.length < safeCount) roles.push('villager')
+  // Fisher-Yates 洗牌，避免角色顺序可预测（不影响 6 人预录局）。
+  for (let i = roles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[roles[i], roles[j]] = [roles[j], roles[i]]
+  }
+  return roles.map((role, index) => makePlayer(`p${index + 1}`, `玩家${index + 1}`, role))
 }
 
 export class WerewolfGame {
@@ -68,9 +104,10 @@ export class WerewolfGame {
     if (!this.fast) await sleep(ms)
   }
 
-  async run(userInput: string): Promise<void> {
+  async run(userInput: string, opts?: { playerCount?: number }): Promise<void> {
     const start = Date.now()
-    const players = buildWerewolfPlayers()
+    const requestedCount = parsePlayerCount(userInput) ?? opts?.playerCount ?? 6
+    const players = buildWerewolfPlayers(requestedCount)
     const transcript: string[] = []
 
     // ---- 阶段：秘密角色分派（扩展独有逻辑） ----
@@ -83,7 +120,7 @@ export class WerewolfGame {
       this.emit({ t: 'game_event', event: { kind: 'WerewolfAction', round: 0, actor: p.id, action: 'reveal', result: `${p.name} 抽到了身份牌（仅本人可见）`, visible_to: [p.id] } })
       await this.paced(220)
     }
-    this.emit({ t: 'game_state', alive: players.map((p) => p.id), dead: [], phase: 'night_1' })
+    this.emit({ t: 'game_state', alive: players.map((p) => p.id), dead: [], phase: 'night_1', roster: toRoster(players) })
     this.emit({ t: 'phase_done', phase_id: 'setup', name: '秘密角色分派' })
     this.emit({ t: 'ledger', ...this.ledger.snapshot() })
 
@@ -162,7 +199,7 @@ ${wolfPlan.length ? `同伴刚才说：${wolfPlan[0].content}` : '你先发言�
       strategy: { A: ['A1'], B: 'B3', C: 'C1', D: 'D1', E: ['E1'], notes: ['A1 按顺序全体发言'] },
     })
     this.emit({ t: 'game_event', event: { kind: 'WerewolfAction', round: 1, actor: 'system', action: 'reveal', result: nightDead.length === 0 ? '天亮了，昨晚是平安夜（无人死亡）' : `天亮了，昨晚 ${nightDead.map((d) => d.name).join('、')} 死亡`, visible_to: ['all'] } })
-    this.emit({ t: 'game_state', alive: players.filter((p) => p.alive).map((p) => p.id), dead, phase: 'day_1' })
+    this.emit({ t: 'game_state', alive: players.filter((p) => p.alive).map((p) => p.id), dead, phase: 'day_1', roster: toRoster(players) })
 
     // ---- 白天发言（A3） ----
     this.ledger.setPhase('day_1')
@@ -222,7 +259,7 @@ ${p.secret_role === 'seer' ? `你掌握：${transcript.join('；')}。` : ''}`,
     const goodLeft = players.filter((p) => p.alive && p.secret_role !== 'werewolf').length
     const resultText = `${eliminated.name} 以 ${tally[eliminatedId]} 票出局，其身份是「${roleName(eliminated.secret_role!)}」。${wolvesLeft === 0 ? '狼人全部出局，好人阵营获胜！' : wolvesLeft >= goodLeft ? '狼人数量已不少于好人，狼人阵营获胜！' : '游戏将继续（Demo 演示到此为一个完整昼夜循环）。'}`
     this.emit({ t: 'vote', votes, result: resultText })
-    this.emit({ t: 'game_state', alive: players.filter((p) => p.alive).map((p) => p.id), dead: players.filter((p) => !p.alive).map((p) => p.id), phase: 'end' })
+    this.emit({ t: 'game_state', alive: players.filter((p) => p.alive).map((p) => p.id), dead: players.filter((p) => !p.alive).map((p) => p.id), phase: 'end', roster: toRoster(players) })
     this.emit({ t: 'ledger', ...this.ledger.snapshot() })
 
     // ---- 复盘（扩展独有：胜负判定 + 策略复用清单） ----

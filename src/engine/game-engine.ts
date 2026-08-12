@@ -1,0 +1,380 @@
+/**
+ * GenericGameEngine · 通用博弈运行时
+ * 引擎只认 GameSpec 中的原语、阶段和胜负条件，不认具体游戏。
+ * 狼人杀、扑克等博弈都通过 GameSpec 描述，而不是各自硬编码。
+ */
+import type {
+  GameActionOutput, GameActionSpec, GamePlayerState, GamePrimitive, GameSpec, GameState,
+  GameWinConditionSpec,
+} from './game-types'
+import type { Emit } from './engine'
+import type { LLMCaller } from './llm'
+import type { WerewolfRosterEntry } from './types'
+import { callJSON } from './llm'
+import { TokenLedger } from './ledger'
+import { policyToLegacyCombo } from './framework/registry'
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function roleName(role: string): string {
+  return { werewolf: '狼人', seer: '预言家', witch: '女巫', villager: '平民' }[role] ?? role
+}
+
+function parsePlayerCount(userInput: string): number | null {
+  const match = userInput.match(/(\d+)\s*人/)
+  return match ? Number(match[1]) : null
+}
+
+/** 按 GameSpec.composition 生成角色列表。 */
+export function buildRoleList(spec: GameSpec, playerCount: number): string[] {
+  const count = Math.max(spec.min_players, Math.min(spec.max_players, Math.floor(playerCount)))
+  const roles: string[] = []
+  for (const fixed of spec.composition.fixed) {
+    for (let i = 0; i < fixed.count; i++) roles.push(fixed.role)
+  }
+  for (const ratio of spec.composition.ratio) {
+    let amount = Math.max(ratio.min ?? 1, Math.floor(count / ratio.denominator))
+    amount = Math.min(amount, ratio.max ?? amount)
+    for (let i = 0; i < amount; i++) roles.push(ratio.role)
+  }
+  while (roles.length < count) roles.push(spec.composition.fill_role)
+  return roles.slice(0, count)
+}
+
+/** 生成玩家名单。6 人局保持回放剧本完全兼容；其他人数动态命名。 */
+function buildPlayers(spec: GameSpec, userInput: string, playerCount?: number): GamePlayerState[] {
+  const requested = parsePlayerCount(userInput) ?? playerCount ?? spec.min_players
+  const roleList = buildRoleList(spec, requested)
+  const count = roleList.length
+  const presetNames = ['沈默', '阿岚', '陆一', '苏叶', '老周', '小满']
+  return roleList.map((role, index) => {
+    const id = `p${index + 1}`
+    const name = count === 6 ? presetNames[index] : `玩家${index + 1}`
+    const roleSpec = spec.roles.find((item) => item.id === role)
+    return {
+      id,
+      name,
+      role,
+      team: roleSpec?.team ?? role,
+      alive: true,
+      private_info: `你的秘密身份是「${roleSpec?.name ?? roleName(role)}」。${roleSpec?.description ?? ''}`,
+    }
+  })
+}
+
+function toRoster(players: GamePlayerState[]): WerewolfRosterEntry[] {
+  return players.map((player) => ({
+    id: player.id,
+    name: player.name,
+    role: player.role,
+    role_label: roleName(player.role),
+    team: player.team === 'wolf' ? 'wolf' : 'good',
+  }))
+}
+
+function replacePlaceholders(template: string, player: GamePlayerState, state: GameState): string {
+  const teammates = state.players
+    .filter((item) => item.team === player.team && item.id !== player.id)
+    .map((item) => `${item.name}(${item.id})`)
+    .join('、')
+  return template
+    .replaceAll('{name}', player.name)
+    .replaceAll('{id}', player.id)
+    .replaceAll('{teammates}', teammates || '无')
+    .replaceAll('{victim}', state.players.find((item) => item.id === state.pending_kill)?.name ?? '未知')
+}
+
+function winCondition(state: GameState, condition: GameWinConditionSpec): boolean {
+  const alive = state.players.filter((player) => player.alive)
+  if (condition.type === 'role_eliminated' && condition.role) {
+    return !alive.some((player) => player.role === condition.role)
+  }
+  if (condition.type === 'team_ge' && condition.team_a && condition.team_b) {
+    const a = alive.filter((player) => player.team === condition.team_a).length
+    const b = alive.filter((player) => player.team === condition.team_b).length
+    return a >= b
+  }
+  return false
+}
+
+export class GenericGameEngine {
+  private ledger = new TokenLedger()
+  private caller: LLMCaller
+  private emit: Emit
+  private fast: boolean
+
+  constructor(caller: LLMCaller, emit: Emit, opts?: { fast?: boolean }) {
+    this.caller = caller
+    this.emit = emit
+    this.fast = opts?.fast ?? false
+  }
+
+  private async paced(ms = 260) {
+    if (!this.fast) await sleep(ms)
+  }
+
+  async run(spec: GameSpec, userInput: string, opts?: { playerCount?: number }): Promise<void> {
+    const start = Date.now()
+    const players = buildPlayers(spec, userInput, opts?.playerCount)
+    const state: GameState = {
+      players,
+      round: 1,
+      phase_id: 'setup',
+      public_log: [],
+      private_logs: {},
+      winner: null,
+    }
+
+    for (const phase of spec.phases) {
+      this.ledger.setPhase(phase.id)
+      state.phase_id = phase.id
+      this.emit({
+        t: 'phase_start',
+        phase_id: phase.id,
+        name: phase.name,
+        purpose: phase.purpose ?? '',
+        strategy: policyToLegacyCombo(phase.policy),
+      })
+      await this.paced()
+
+      if (phase.kind === 'setup') {
+        for (const player of state.players) {
+          this.emit({
+            t: 'game_event',
+            event: {
+              kind: 'WerewolfAction', round: 0, actor: player.id, action: 'reveal',
+              result: `${player.name} 抽到了身份牌（仅本人可见）`, visible_to: [player.id],
+            },
+          })
+          await this.paced(180)
+        }
+      } else if (phase.kind === 'end') {
+        this.runJudge(spec, state)
+      } else {
+        await this.runPhaseActions(spec, state, phase.actions)
+      }
+
+      this.emit({ t: 'phase_done', phase_id: phase.id, name: phase.name })
+      this.emit({ t: 'ledger', ...this.ledger.snapshot() })
+      if (state.winner) break
+    }
+
+    this.emitReport(spec, userInput, state)
+    this.emit({ t: 'game_state', alive: state.players.filter((p) => p.alive).map((p) => p.id), dead: state.players.filter((p) => !p.alive).map((p) => p.id), phase: 'end', roster: toRoster(state.players) })
+    this.emit({ t: 'ledger', ...this.ledger.snapshot() })
+    this.emit({ t: 'run_done', elapsed_ms: Date.now() - start, terminal_state: 'DECIDED' })
+  }
+
+  private async runPhaseActions(spec: GameSpec, state: GameState, actionIds: string[]) {
+    for (const actionId of actionIds) {
+      const action = spec.actions.find((item) => item.id === actionId)
+      if (!action) continue
+      if (action.role === '__system') {
+        if (action.primitive === 'resolve_night') this.resolveNight(state)
+        if (action.primitive === 'resolve_vote') this.resolveVote(state)
+        if (action.primitive === 'judge_winner') this.runJudgeForState(state, spec)
+        continue
+      }
+      const participants = this.participantsFor(action.role, state)
+      for (const player of participants) {
+        await this.executeAction(state, action, player)
+      }
+    }
+  }
+
+  private participantsFor(role: string, state: GameState): GamePlayerState[] {
+    if (role === 'all') return state.players.filter((player) => player.alive)
+    return state.players.filter((player) => player.alive && player.role === role)
+  }
+
+  private async executeAction(state: GameState, action: GameActionSpec, player: GamePlayerState) {
+    const system = replacePlaceholders(action.prompt, player, state)
+    const { data, tokens } = await callJSON<GameActionOutput>(
+      this.caller,
+      system,
+      `输出 JSON：${action.output_schema}`,
+      (attempt) => this.emit({ t: 'retry', reason: `${action.name} JSON 解析失败`, attempt }),
+    )
+    this.ledger.record(tokens)
+    this.applyPrimitive(action.primitive, state, player, data)
+    this.emitAction(action, state, player, data)
+    await this.paced(220)
+  }
+
+  private applyPrimitive(primitive: GamePrimitive, state: GameState, player: GamePlayerState, data: GameActionOutput) {
+    switch (primitive) {
+      case 'select_target':
+        if (data.target) state.pending_kill = data.target
+        break
+      case 'inspect_role': {
+        const target = state.players.find((item) => item.id === data.target)
+        if (target) player.private_info += `\n你查验到 ${target.name} 是「${roleName(target.role)}」。`
+        break
+      }
+      case 'decide_life':
+        state.pending_save = Boolean(data.use_antidote)
+        state.pending_poison = data.poison_target ?? undefined
+        break
+      case 'mark_dead':
+        if (data.target) {
+          const target = state.players.find((item) => item.id === data.target)
+          if (target) target.alive = false
+        }
+        break
+      case 'revive':
+        if (data.target) {
+          const target = state.players.find((item) => item.id === data.target)
+          if (target) target.alive = true
+        }
+        break
+      case 'poison':
+        if (state.pending_poison) {
+          const target = state.players.find((item) => item.id === state.pending_poison)
+          if (target) target.alive = false
+        }
+        break
+      case 'public_speech':
+        state.public_log.push(`${player.name}：${data.content ?? ''}`)
+        break
+      case 'vote':
+        state.votes = [...(state.votes ?? []), { agent_id: player.id, vote: data.target ?? '', reason: data.reason ?? '' }]
+        state.public_log.push(`${player.name} 投票给 ${data.target ?? '弃权'}（${data.reason ?? ''}）`)
+        break
+      case 'resolve_night':
+        this.resolveNight(state)
+        break
+      case 'resolve_vote':
+        this.resolveVote(state)
+        break
+      case 'judge_winner':
+        this.runJudgeForState(state, null)
+        break
+      case 'private_chat':
+      case 'assign_roles':
+        break
+    }
+  }
+
+  private resolveNight(state: GameState) {
+    const killTarget = state.players.find((player) => player.id === state.pending_kill)
+    if (killTarget && !state.pending_save) killTarget.alive = false
+    if (state.pending_poison) {
+      const poisonTarget = state.players.find((player) => player.id === state.pending_poison)
+      if (poisonTarget) poisonTarget.alive = false
+    }
+    this.runJudgeForState(state, null)
+  }
+
+  private resolveVote(state: GameState) {
+    const votes = state.votes ?? []
+    const tally: Record<string, number> = {}
+    for (const vote of votes) {
+      if (!vote.vote) continue
+      tally[vote.vote] = (tally[vote.vote] ?? 0) + 1
+    }
+    const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1])
+    if (ranked.length === 0) return
+    const eliminatedId = ranked[0][0]
+    const eliminated = state.players.find((player) => player.id === eliminatedId)
+    if (eliminated) {
+      eliminated.alive = false
+      const roleLabel = roleName(eliminated.role)
+      state.public_log.push(`${eliminated.name} 以 ${ranked[0][1]} 票出局，身份是「${roleLabel}」。`)
+      this.emit({
+        t: 'vote',
+        votes,
+        result: `${eliminated.name} 以 ${ranked[0][1]} 票出局，其身份是「${roleLabel}」。`,
+      })
+    }
+    state.votes = []
+  }
+
+  private runJudge(spec: GameSpec, state: GameState) {
+    this.runJudgeForState(state, spec)
+  }
+
+  private runJudgeForState(state: GameState, spec: GameSpec | null) {
+    if (!spec) return
+    for (const condition of spec.win_conditions) {
+      if (winCondition(state, condition)) {
+        state.winner = condition.id === 'wolf_win' || condition.team_a === 'wolf' ? 'wolf' : 'good'
+        return
+      }
+    }
+  }
+
+  private emitAction(action: GameActionSpec, state: GameState, player: GamePlayerState, data: GameActionOutput) {
+    if (action.primitive === 'private_chat') {
+      this.emit({
+        t: 'game_event',
+        event: {
+          kind: 'WerewolfSpeech', phase: 'night', round: state.round, agent_id: player.id,
+          audience: 'private', content: data.content ?? '',
+        },
+      })
+    } else if (action.primitive === 'public_speech') {
+      this.emit({
+        t: 'game_event',
+        event: {
+          kind: 'WerewolfSpeech', phase: 'day', round: state.round, agent_id: player.id,
+          audience: 'public', content: data.content ?? '',
+        },
+      })
+    } else if (action.primitive === 'vote') {
+      // 投票事件单独用 vote 事件聚合，这里先记录
+    } else {
+      this.emit({
+        t: 'game_event',
+        event: {
+          kind: 'WerewolfAction', round: state.round, actor: player.id, action: action.primitive === 'select_target' ? 'kill' : action.primitive === 'inspect_role' ? 'check' : action.primitive === 'decide_life' ? (data.use_antidote ? 'save' : 'poison') : 'reveal',
+          target: data.target ?? data.poison_target ?? undefined,
+          result: `${player.name} 执行「${action.name}」${data.target ? ` → ${state.players.find((p) => p.id === data.target)?.name ?? data.target}` : ''}`,
+          visible_to: action.audience === 'public' ? ['all'] : [player.id, 'god'],
+        },
+      })
+    }
+  }
+
+  private emitReport(spec: GameSpec, userInput: string, state: GameState) {
+    const markdown = [
+      `## ${spec.name} 对局复盘`,
+      '',
+      `**用户输入**：${userInput}`,
+      '',
+      `### 对局结果`,
+      `- 存活：${state.players.filter((p) => p.alive).map((p) => `${p.name}（${roleName(p.role)}）`).join('、') || '无'}`,
+      `- 出局：${state.players.filter((p) => !p.alive).map((p) => `${p.name}（${roleName(p.role)}）`).join('、') || '无'}`,
+      `- 胜负：${state.winner ? (state.winner === 'wolf' ? '狼人阵营' : '好人阵营') : '未分胜负（演示轮次）'}`,
+      '',
+      `### 通用框架复用`,
+      `- 本局由 GameSpec 声明式驱动，狼人杀不是引擎硬编码，而是 ${spec.game_type} 配置实例`,
+      `- 复用：B3 角色路由 / communication_mode private Modifier / A1 全体激活 / E5 投票决议`,
+      '',
+    ].join('\n')
+    this.emit({ t: 'report', markdown })
+  }
+}
+
+/** 对未知博弈，用 LLM 把用户输入动态编译成 GameSpec。 */
+export async function generateGameSpec(caller: LLMCaller, userInput: string): Promise<GameSpec> {
+  const schema = JSON.stringify({
+    game_type: '<英文snake_case>',
+    name: '<中文名称>',
+    description: '<规则概述>',
+    min_players: 2,
+    max_players: 20,
+    roles: [{ id: '<role_id>', name: '<角色名>', team: '<阵营>', description: '<能力说明>', actions: ['<action_id>'] }],
+    actions: [{ id: '<action_id>', name: '<动作名>', primitive: '<见下方原语>', role: '<角色或all>', audience: 'self|team|public|god', prompt: '<给Agent的指令>', output_schema: '<JSON schema>' }],
+    composition: { fixed: [], ratio: [], fill_role: '<角色id>' },
+    phases: [{ id: '<phase_id>', name: '<阶段名>', kind: 'setup|action|speak|vote|end', participants: 'all|all_alive|["role"]', actions: ['<action_id>'], policy: { A: 'A1', B: 'B1', C: 'C1', D: 'D1', E: 'E1' }, order: 'sequential' }],
+    win_conditions: [{ id: '<win_id>', description: '<胜负条件>', type: 'role_eliminated|team_ge|llm' }],
+    fallback_rule: '<无法判定时的兜底规则>',
+  })
+  const { data } = await callJSON<GameSpec>(
+    caller,
+    '你是通用博弈规则编译器。把用户描述的博弈游戏转换成 GameSpec。可用原语：assign_roles, private_chat, select_target, inspect_role, mark_dead, revive, poison, decide_life, public_speech, vote, resolve_night, judge_winner。只输出 JSON。',
+    `用户输入：${userInput}\n\n输出 GameSpec JSON，格式：\n${schema}`,
+    (attempt) => { void attempt },
+  )
+  return data
+}
