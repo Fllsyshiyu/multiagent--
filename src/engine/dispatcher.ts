@@ -61,7 +61,8 @@ export async function dispatch(
     data.reasoning = '【用户强制多 Agent 模式】' + data.reasoning
   } else {
     if (data.agent_count <= 1) data.task_type = 'single'
-    if (data.task_type === 'competitive' && !data.game_type) data.game_type = 'werewolf'
+    // competitive 且 game_type 缺失时保留 null，交由通用博弈规则编译器动态生成，
+    // 不再把所有未知博弈默认成狼人杀。
   }
   return { profile: data, tokens }
 }

@@ -239,6 +239,13 @@ export class GenericGameEngine {
       await this.paced()
 
       if (phase.kind === 'setup') {
+        this.emit({
+          t: 'game_state',
+          alive: state.players.filter((p) => p.alive).map((p) => p.id),
+          dead: state.players.filter((p) => !p.alive).map((p) => p.id),
+          phase: 'setup',
+          roster: toRoster(state.players),
+        })
         for (const player of state.players) {
           this.emit({
             t: 'game_event',
