@@ -1,4 +1,4 @@
-/** DistilBERT-only five-level task complexity contract. */
+/** API rubric based five-level task complexity contract. */
 export type ComplexityLevel = 1 | 2 | 3 | 4 | 5
 export type DimensionScore = 0 | 1 | 2 | 3 | 4
 
@@ -18,12 +18,12 @@ export interface ComplexityResult {
   confidence: number
   model: string
   latency_ms: number
-  method: 'distilbert_anchor_similarity_v1'
+  method: 'rubric_llm_api_v1'
   rubric_version: string
 }
 
 export interface ComplexityClassification {
   result: ComplexityResult
-  tokens: 0
-  source: 'distilbert'
+  tokens: number
+  source: 'api'
 }

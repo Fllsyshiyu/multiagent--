@@ -4,6 +4,17 @@
 import type { ScriptData } from '../../engine/scripted'
 
 export const singleScript: ScriptData = {
+  complexity: {
+    dimensions: {
+      reasoning_depth: 1,
+      step_count: 1,
+      domain_expertise: 0,
+      tool_dependency: 0,
+      coordination: 0,
+      uncertainty: 1,
+    },
+    confidence: 0.94,
+  },
   dispatch: {
     agent_count: 1,
     task_type: 'single',

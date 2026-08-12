@@ -27,7 +27,7 @@ export interface PhaseBlock {
 }
 
 export type Block =
-  | { kind: 'complexity'; running: boolean; result?: import('../complexity').ComplexityResult; tokens?: number; source?: 'distilbert' }
+  | { kind: 'complexity'; running: boolean; result?: import('../complexity').ComplexityResult; tokens?: number; source?: 'api' }
   | { kind: 'dispatch'; running: boolean; profile?: TaskProfile; tokens?: number }
   | { kind: 'track'; track: TaskType; reason: string }
   | { kind: 'compile'; steps: { step: number; name: string; detail: string; tokens: number }[]; config?: ScenarioConfig }

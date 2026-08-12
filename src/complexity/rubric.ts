@@ -1,6 +1,6 @@
 import type { ComplexityDimensions, ComplexityLevel, DimensionScore } from './types'
 
-export const COMPLEXITY_RUBRIC_VERSION = 'ma-collab-complexity-v2-distilbert'
+export const COMPLEXITY_RUBRIC_VERSION = 'ma-collab-complexity-v3-api-rubric'
 
 export const COMPLEXITY_LEVELS: Record<ComplexityLevel, { name: string; description: string }> = {
   1: { name: '直接执行', description: '单步转换、提取或基础计算。' },

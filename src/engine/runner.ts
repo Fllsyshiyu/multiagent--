@@ -14,7 +14,7 @@ import { classifyComplexity } from '../complexity'
 import { InvocationAudit } from './framework/audit'
 import { createTerminalReport } from './framework/events'
 
-/** classifyComplexity 服务不可用时的降级默认值 */
+/** Complexity API 不可用时的保守降级值 */
 function emptyComplexity(): ComplexityClassification {
   const dims: ComplexityDimensions = {
     reasoning_depth: 3 as DimensionScore,
@@ -31,17 +31,17 @@ function emptyComplexity(): ComplexityClassification {
     confidence: 0,
     model: 'fallback',
     latency_ms: 0,
-    method: 'distilbert_anchor_similarity_v1',
-    rubric_version: 'v3',
+    method: 'rubric_llm_api_v1',
+    rubric_version: 'ma-collab-complexity-v3-api-rubric',
   }
-  return { result, tokens: 0, source: 'distilbert' }
+  return { result, tokens: 0, source: 'api' }
 }
 
-async function safeClassify(query: string): Promise<ComplexityClassification> {
+async function safeClassify(query: string, caller: LLMCaller): Promise<ComplexityClassification> {
   try {
-    return await classifyComplexity(query)
+    return await classifyComplexity(query, caller)
   } catch (e) {
-    console.warn('Complexity service unavailable, using fallback:', e instanceof Error ? e.message : String(e))
+    console.warn('Complexity API unavailable, using fallback:', e instanceof Error ? e.message : String(e))
     return emptyComplexity()
   }
 }
@@ -56,7 +56,7 @@ export async function analyzeInput(
   const invocationAudit = new InvocationAudit()
   const auditedCaller = invocationAudit.wrap(caller)
   emit({ t: 'complexity_start', user_input: userInput })
-  const complexity = await safeClassify(userInput)
+  const complexity = await safeClassify(userInput, caller)
   ledger.record(complexity.tokens)
   emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
@@ -106,7 +106,7 @@ export async function runInput(
   const invocationAudit = new InvocationAudit(options.prepared?.modelInvocations)
   const auditedCaller = invocationAudit.wrap(caller)
   emit({ t: 'complexity_start', user_input: userInput })
-  const complexity = options.prepared?.complexity ?? await safeClassify(userInput)
+  const complexity = options.prepared?.complexity ?? await safeClassify(userInput, caller)
   ledger.record(complexity.tokens)
   emit({ t: 'complexity_done', result: complexity.result, tokens: complexity.tokens, source: complexity.source })
   emit({ t: 'dispatch_start', user_input: userInput })
