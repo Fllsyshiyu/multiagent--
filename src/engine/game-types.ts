@@ -93,6 +93,13 @@ export interface GamePhaseSpec {
   round?: number
 }
 
+export interface GameLoopSpec {
+  /** 循环执行的阶段 id 列表，例如狼人杀的 night/day/vote。 */
+  cycle_phase_ids: string[]
+  max_rounds: number
+  break_on_winner: boolean
+}
+
 export interface GameWinConditionSpec {
   id: string
   description: string
@@ -114,4 +121,5 @@ export interface GameSpec {
   phases: GamePhaseSpec[]
   win_conditions: GameWinConditionSpec[]
   fallback_rule: string
+  game_loop?: GameLoopSpec
 }

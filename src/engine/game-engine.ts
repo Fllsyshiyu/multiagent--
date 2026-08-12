@@ -226,51 +226,83 @@ export class GenericGameEngine {
       winner: null,
     }
 
-    for (const phase of spec.phases) {
-      this.ledger.setPhase(phase.id)
-      state.phase_id = phase.id
-      this.emit({
-        t: 'phase_start',
-        phase_id: phase.id,
-        name: phase.name,
-        purpose: phase.purpose ?? '',
-        strategy: policyToLegacyCombo(phase.policy),
-      })
-      await this.paced()
+    const loop = spec.game_loop
+    const cycleIds = new Set(loop?.cycle_phase_ids ?? [])
+    const isCyclePhase = (phase: GameSpec['phases'][number]) => cycleIds.has(phase.id)
+    const executeOne = async (phase: GameSpec['phases'][number]) => {
+      await this.executePhase(spec, state, phase)
+    }
 
-      if (phase.kind === 'setup') {
-        this.emit({
-          t: 'game_state',
-          alive: state.players.filter((p) => p.alive).map((p) => p.id),
-          dead: state.players.filter((p) => !p.alive).map((p) => p.id),
-          phase: 'setup',
-          roster: toRoster(state.players),
-        })
-        for (const player of state.players) {
-          this.emit({
-            t: 'game_event',
-            event: {
-              kind: 'WerewolfAction', round: 0, actor: player.id, action: 'reveal',
-              result: `${player.name} 抽到了身份牌（仅本人可见）`, visible_to: [player.id],
-            },
-          })
-          await this.paced(180)
-        }
-      } else if (phase.kind === 'end') {
-        this.runJudge(spec, state)
-      } else {
-        await this.runPhaseActions(spec, state, phase.actions)
+    if (loop) {
+      for (const phase of spec.phases.filter((phase) => phase.kind === 'setup')) await executeOne(phase)
+      for (const phase of spec.phases.filter((phase) => phase.kind !== 'setup' && phase.kind !== 'end' && !isCyclePhase(phase))) {
+        await executeOne(phase)
+        if (state.winner && loop.break_on_winner) break
       }
-
-      this.emit({ t: 'phase_done', phase_id: phase.id, name: phase.name })
-      this.emit({ t: 'ledger', ...this.ledger.snapshot() })
-      if (state.winner) break
+      for (let round = 1; round <= loop.max_rounds && !(state.winner && loop.break_on_winner); round++) {
+        state.round = round
+        state.pending_kill = undefined
+        state.pending_save = undefined
+        state.pending_poison = undefined
+        for (const phaseId of loop.cycle_phase_ids) {
+          const phase = spec.phases.find((candidate) => candidate.id === phaseId)
+          if (!phase) continue
+          await executeOne(phase)
+          if (state.winner && loop.break_on_winner) break
+        }
+      }
+      for (const phase of spec.phases.filter((phase) => phase.kind === 'end')) await executeOne(phase)
+    } else {
+      for (const phase of spec.phases) {
+        await executeOne(phase)
+        if (state.winner) break
+      }
     }
 
     this.emitReport(spec, userInput, state)
     this.emit({ t: 'game_state', alive: state.players.filter((p) => p.alive).map((p) => p.id), dead: state.players.filter((p) => !p.alive).map((p) => p.id), phase: 'end', roster: toRoster(state.players) })
     this.emit({ t: 'ledger', ...this.ledger.snapshot() })
     this.emit({ t: 'run_done', elapsed_ms: Date.now() - start, terminal_state: 'DECIDED' })
+  }
+
+  private async executePhase(spec: GameSpec, state: GameState, phase: GameSpec['phases'][number]) {
+    this.ledger.setPhase(phase.id)
+    state.phase_id = phase.id
+    this.emit({
+      t: 'phase_start',
+      phase_id: phase.id,
+      name: phase.name,
+      purpose: phase.purpose ?? '',
+      strategy: policyToLegacyCombo(phase.policy),
+    })
+    await this.paced()
+
+    if (phase.kind === 'setup') {
+      this.emit({
+        t: 'game_state',
+        alive: state.players.filter((p) => p.alive).map((p) => p.id),
+        dead: state.players.filter((p) => !p.alive).map((p) => p.id),
+        phase: 'setup',
+        roster: toRoster(state.players),
+      })
+      for (const player of state.players) {
+        this.emit({
+          t: 'game_event',
+          event: {
+            kind: 'WerewolfAction', round: 0, actor: player.id, action: 'reveal',
+            result: `${player.name} 抽到了身份牌（仅本人可见）`, visible_to: [player.id],
+          },
+        })
+        await this.paced(180)
+      }
+    } else if (phase.kind === 'end') {
+      this.runJudge(spec, state)
+    } else {
+      await this.runPhaseActions(spec, state, phase.actions)
+    }
+
+    this.emit({ t: 'phase_done', phase_id: phase.id, name: phase.name })
+    this.emit({ t: 'ledger', ...this.ledger.snapshot() })
   }
 
   private async runPhaseActions(spec: GameSpec, state: GameState, actionIds: string[]) {
@@ -464,7 +496,7 @@ export class GenericGameEngine {
 }
 
 /** 对未知博弈，用 LLM 把用户输入动态编译成 GameSpec。 */
-export async function generateGameSpec(caller: LLMCaller, userInput: string): Promise<GameSpec> {
+export async function generateGameSpec(caller: LLMCaller, userInput: string, ruleContext = ''): Promise<GameSpec> {
   const schema = JSON.stringify({
     game_type: '<英文snake_case>',
     name: '<中文名称>',
@@ -480,9 +512,38 @@ export async function generateGameSpec(caller: LLMCaller, userInput: string): Pr
   })
   const { data } = await callJSON<GameSpec>(
     caller,
-    '你是通用博弈规则编译器。把用户描述的博弈游戏转换成 GameSpec。可用原语：assign_roles, private_chat, select_target, inspect_role, mark_dead, revive, poison, decide_life, public_speech, vote, resolve_night, judge_winner。只输出 JSON。',
-    `用户输入：${userInput}\n\n输出 GameSpec JSON，格式：\n${schema}`,
+    `你是通用博弈规则编译器。你的任务是把用户指定的游戏转换成可执行的 GameSpec，而不是复制任何已有模板。
+禁止默认输出狼人杀规则。必须依据用户描述或下方检索到的规则，真实描述该游戏的阵营、角色能力、回合流程和胜负条件。
+可用原语：assign_roles, private_chat, select_target, inspect_role, mark_dead, revive, poison, decide_life, public_speech, vote, resolve_night, resolve_vote, judge_winner。
+phases 必须包含至少一个非 setup/end 的阶段；每个非系统动作都必须指定执行它的角色。只输出 JSON。`,
+    `用户输入：${userInput}
+${ruleContext ? `检索到的游戏规则：\n${ruleContext}\n` : ''}
+输出 GameSpec JSON，格式：\n${schema}`,
     (attempt) => { void attempt },
   )
   return normalizeGameSpec(data)
+}
+
+/** 从 Wikipedia 检索游戏规则摘要；网络不可用时返回空字符串，由 LLM 知识兜底。 */
+export async function searchGameRules(gameType: string, userInput: string): Promise<string> {
+  const query = gameType && gameType !== 'unknown' ? gameType : userInput
+  try {
+    const searchUrl = `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*&srlimit=3`
+    const searchResponse = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) })
+    if (!searchResponse.ok) return ''
+    const searchData = await searchResponse.json() as { query?: { search?: { title?: string }[] } }
+    const titles = (searchData.query?.search ?? []).map((item) => item.title).filter(Boolean)
+    if (titles.length === 0) return ''
+    const extractUrl = `https://zh.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&format=json&origin=*&titles=${encodeURIComponent(titles.join('|'))}`
+    const extractResponse = await fetch(extractUrl, { signal: AbortSignal.timeout(6000) })
+    if (!extractResponse.ok) return ''
+    const extractData = await extractResponse.json() as { query?: { pages?: Record<string, { extract?: string }> } }
+    return Object.values(extractData.query?.pages ?? {})
+      .map((page) => page.extract ?? '')
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 4000)
+  } catch {
+    return ''
+  }
 }

@@ -6,7 +6,7 @@ import { dispatch } from './dispatcher'
 import { compileScenario } from './compiler'
 import { OrchestrationEngine, type Emit } from './engine'
 import { GAME_REGISTRY } from './game-specs'
-import { GenericGameEngine, generateGameSpec } from './game-engine'
+import { GenericGameEngine, generateGameSpec, searchGameRules } from './game-engine'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
 import type { ForceTrack, ModelInvocation, ScenarioConfig, TaskProfile } from './types'
@@ -156,7 +156,8 @@ export async function runInput(
     let gameSpec = GAME_REGISTRY[gameType]
     if (!gameSpec) {
       try {
-        gameSpec = await generateGameSpec(auditedCaller, userInput)
+        const ruleContext = await searchGameRules(gameType, userInput)
+        gameSpec = await generateGameSpec(auditedCaller, userInput, ruleContext)
         emit({ t: 'adaptation', trigger: `未在注册表找到博弈「${gameType}」`, action: '由通用规则编译器动态生成 GameSpec', scope: '博弈轨道' })
       } catch (error) {
         throw new Error(`无法为博弈「${gameType}」生成可执行规则：${error instanceof Error ? error.message : String(error)}`)
