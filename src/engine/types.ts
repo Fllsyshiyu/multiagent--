@@ -616,12 +616,36 @@ export interface WerewolfAction {
   visible_to: string[] // B3 角色路由：哪些角色可见此信息
 }
 
+/** 通用博弈发言事件。phase/action 均来自 GameSpec，不硬编码狼人杀语义。 */
+export interface GameSpeechEvent {
+  kind: 'GameSpeech'
+  phase: string
+  phase_label: string
+  round: number
+  agent_id: string
+  audience: 'private' | 'public'
+  content: string
+}
+
+export interface GameActionEvent {
+  kind: 'GameAction'
+  phase: string
+  phase_label: string
+  round: number
+  actor: string
+  action: string
+  action_label: string
+  target?: string
+  result: string
+  visible_to: string[]
+}
+
 export interface WerewolfRosterEntry {
   id: string
   name: string
   role: string
   role_label: string
-  team: 'wolf' | 'good'
+  team: string
 }
 
 // ============ Observer 指标 ============
@@ -659,7 +683,7 @@ export type EngineEvent =
   | { t: 'metrics'; snapshot: MetricsSnapshot }
   | { t: 'exam_frozen'; blueprint: ExamBlueprint }
   | { t: 'exam_result'; result: ExamResult }
-  | { t: 'game_event'; event: WerewolfAction | WerewolfSpeech }
+  | { t: 'game_event'; event: WerewolfAction | WerewolfSpeech | GameActionEvent | GameSpeechEvent }
   | { t: 'game_state'; alive: string[]; dead: string[]; phase: string; roster?: WerewolfRosterEntry[] }
   | { t: 'vote'; votes: { agent_id: string; vote: string; reason: string }[]; result: string }
   | { t: 'phase_done'; phase_id: string; name: string }

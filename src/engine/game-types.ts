@@ -49,6 +49,7 @@ export interface GamePlayerState {
   id: string
   name: string
   role: string
+  role_label: string
   team: string
   alive: boolean
   private_info: string
@@ -58,6 +59,7 @@ export interface GameState {
   players: GamePlayerState[]
   round: number
   phase_id: string
+  phase_label: string
   public_log: string[]
   private_logs: Record<string, string[]>
   pending_kill?: string

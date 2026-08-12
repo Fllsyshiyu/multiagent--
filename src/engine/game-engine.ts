@@ -154,9 +154,10 @@ function buildPlayers(spec: GameSpec, userInput: string, playerCount?: number): 
       id,
       name,
       role,
+      role_label: roleSpec?.name ?? roleName(role),
       team: roleSpec?.team ?? role,
       alive: true,
-      private_info: `你的秘密身份是「${roleSpec?.name ?? roleName(role)}」。${roleSpec?.description ?? ''}`,
+      private_info: `${roleSpec?.name ?? roleName(role)} · ${roleSpec?.description ?? ''}`,
     }
   })
 }
@@ -166,8 +167,8 @@ function toRoster(players: GamePlayerState[]): WerewolfRosterEntry[] {
     id: player.id,
     name: player.name,
     role: player.role,
-    role_label: roleName(player.role),
-    team: player.team === 'wolf' ? 'wolf' : 'good',
+    role_label: player.role_label,
+    team: player.team,
   }))
 }
 
@@ -221,6 +222,7 @@ export class GenericGameEngine {
       players,
       round: 1,
       phase_id: 'setup',
+      phase_label: 'setup',
       public_log: [],
       private_logs: {},
       winner: null,
@@ -268,6 +270,7 @@ export class GenericGameEngine {
   private async executePhase(spec: GameSpec, state: GameState, phase: GameSpec['phases'][number]) {
     this.ledger.setPhase(phase.id)
     state.phase_id = phase.id
+    state.phase_label = phase.name
     this.emit({
       t: 'phase_start',
       phase_id: phase.id,
@@ -290,7 +293,7 @@ export class GenericGameEngine {
           t: 'game_event',
           event: {
             kind: 'WerewolfAction', round: 0, actor: player.id, action: 'reveal',
-            result: `${player.name} 抽到了身份牌（仅本人可见）`, visible_to: [player.id],
+            result: `${player.name} 获得初始信息（仅本人可见）`, visible_to: [player.id],
           },
         })
         await this.paced(180)
@@ -348,7 +351,7 @@ export class GenericGameEngine {
         break
       case 'inspect_role': {
         const target = state.players.find((item) => item.id === data.target)
-        if (target) player.private_info += `\n你查验到 ${target.name} 是「${roleName(target.role)}」。`
+        if (target) player.private_info += `\n查验结果：${target.name} 是「${target.role_label}」。`
         break
       }
       case 'decide_life':
@@ -418,7 +421,7 @@ export class GenericGameEngine {
     const eliminated = state.players.find((player) => player.id === eliminatedId)
     if (eliminated) {
       eliminated.alive = false
-      const roleLabel = roleName(eliminated.role)
+      const roleLabel = eliminated.role_label
       state.public_log.push(`${eliminated.name} 以 ${ranked[0][1]} 票出局，身份是「${roleLabel}」。`)
       this.emit({
         t: 'vote',
@@ -448,7 +451,7 @@ export class GenericGameEngine {
       this.emit({
         t: 'game_event',
         event: {
-          kind: 'WerewolfSpeech', phase: 'night', round: state.round, agent_id: player.id,
+          kind: 'GameSpeech', phase: state.phase_id, phase_label: state.phase_label, round: state.round, agent_id: player.id,
           audience: 'private', content: data.content ?? '',
         },
       })
@@ -456,7 +459,7 @@ export class GenericGameEngine {
       this.emit({
         t: 'game_event',
         event: {
-          kind: 'WerewolfSpeech', phase: 'day', round: state.round, agent_id: player.id,
+          kind: 'GameSpeech', phase: state.phase_id, phase_label: state.phase_label, round: state.round, agent_id: player.id,
           audience: 'public', content: data.content ?? '',
         },
       })
@@ -466,7 +469,13 @@ export class GenericGameEngine {
       this.emit({
         t: 'game_event',
         event: {
-          kind: 'WerewolfAction', round: state.round, actor: player.id, action: action.primitive === 'select_target' ? 'kill' : action.primitive === 'inspect_role' ? 'check' : action.primitive === 'decide_life' ? (data.use_antidote ? 'save' : 'poison') : 'reveal',
+          kind: 'GameAction',
+          phase: state.phase_id,
+          phase_label: state.phase_label,
+          round: state.round,
+          actor: player.id,
+          action: action.id,
+          action_label: action.name,
           target: data.target ?? data.poison_target ?? undefined,
           result: `${player.name} 执行「${action.name}」${data.target ? ` → ${state.players.find((p) => p.id === data.target)?.name ?? data.target}` : ''}`,
           visible_to: action.audience === 'public' ? ['all'] : [player.id, 'god'],
@@ -482,13 +491,13 @@ export class GenericGameEngine {
       `**用户输入**：${userInput}`,
       '',
       `### 对局结果`,
-      `- 存活：${state.players.filter((p) => p.alive).map((p) => `${p.name}（${roleName(p.role)}）`).join('、') || '无'}`,
-      `- 出局：${state.players.filter((p) => !p.alive).map((p) => `${p.name}（${roleName(p.role)}）`).join('、') || '无'}`,
-      `- 胜负：${state.winner ? (state.winner === 'wolf' ? '狼人阵营' : '好人阵营') : '未分胜负（演示轮次）'}`,
+      `- 存活：${state.players.filter((p) => p.alive).map((p) => `${p.name}（${p.role_label}）`).join('、') || '无'}`,
+      `- 出局：${state.players.filter((p) => !p.alive).map((p) => `${p.name}（${p.role_label}）`).join('、') || '无'}`,
+      `- 胜负：${state.winner ? (state.winner === 'wolf' ? '狼人阵营' : '好人阵营') : '未分胜负'}`,
       '',
       `### 通用框架复用`,
-      `- 本局由 GameSpec 声明式驱动，狼人杀不是引擎硬编码，而是 ${spec.game_type} 配置实例`,
-      `- 复用：B3 角色路由 / communication_mode private Modifier / A1 全体激活 / E5 投票决议`,
+      `- 本局由 ${spec.name} GameSpec 声明式驱动`,
+      `- 规则来源：${spec.description}`,
       '',
     ].join('\n')
     this.emit({ t: 'report', markdown })

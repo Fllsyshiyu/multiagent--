@@ -8,7 +8,7 @@ import { Chip, SectionCard, BlockHeader, StrategyChips, Spinner, AgentAvatar, To
 import { ArtifactView, ProposalCard, ScoreMatrix } from './Artifacts'
 import { FishbowlCircle } from './Fishbowl'
 import { ExamBlueprintView, ExamResultView } from './Exam'
-import { WerewolfRoster, WerewolfSpeechBubble, WerewolfActionLine, VoteTable } from './Werewolf'
+import { GameActionLine, GameSpeechBubble, WerewolfRoster, WerewolfSpeechBubble, WerewolfActionLine, VoteTable } from './Werewolf'
 import { FinalProposalView } from './Artifacts'
 import { ComplexityBlock } from './Complexity'
 
@@ -235,6 +235,10 @@ function PhaseItems({ phase, config, prevInner }: { phase: PhaseBlock; config?: 
         }
         if (e.event.kind === 'WerewolfSpeech') {
           elements.push(<div key={idx} className="mt-2"><WerewolfSpeechBubble speech={e.event} roster={roster} /></div>)
+        } else if (e.event.kind === 'GameSpeech') {
+          elements.push(<div key={idx} className="mt-2"><GameSpeechBubble speech={e.event} roster={roster} /></div>)
+        } else if (e.event.kind === 'GameAction') {
+          elements.push(<div key={idx} className="mt-2"><GameActionLine action={e.event} roster={roster} /></div>)
         } else {
           elements.push(<div key={idx} className="mt-2"><WerewolfActionLine action={e.event} roster={roster} /></div>)
         }
