@@ -236,7 +236,7 @@ export interface VersionedRecord {
   status: 'draft' | 'valid' | 'superseded' | 'rejected'
 }
 
-export type BlackboardRegister = 'facts' | 'claims' | 'evidence' | 'objections' | 'unknowns' | 'decisions' | 'artifacts'
+export type BlackboardRegister = 'facts' | 'claims' | 'evidence' | 'objections' | 'unknowns' | 'decisions' | 'checkpoints' | 'artifacts'
 
 export interface BlackboardEntry extends VersionedRecord {
   register: BlackboardRegister
@@ -268,6 +268,58 @@ export interface PositionRevision extends VersionedRecord {
   self_reported_trigger: string
   confidence: number
   causal_status: 'self_reported' | 'observed_correlation'
+}
+
+export type AlignmentDriftFlag =
+  | 'OBJECTIVE_DRIFT'
+  | 'LOCAL_SOLUTION_PRESENTED_AS_GLOBAL'
+  | 'UNMAPPED_ISSUE'
+  | 'REQUIRED_ARTIFACT_MISSING'
+  | 'UNKNOWN_PROMOTED_TO_FACT'
+  | 'UNRESOLVED_ISSUE_DROPPED'
+  | 'CONSTRAINT_VIOLATION'
+  | 'MINORITY_POSITION_LOST'
+
+export type CheckpointDecision = 'CONTINUE' | 'RETRY_PHASE' | 'RECOMPILE' | 'WAITING_FOR_EVIDENCE' | 'HUMAN_ESCALATION'
+export type CheckpointTrigger = 'COMPILE' | 'PHASE_EXIT' | 'NEW_EVIDENCE' | 'PRE_TERMINAL' | 'TERMINAL'
+
+export interface SemanticAlignmentReview {
+  aligned: boolean
+  current_focus: string
+  drift_flags: Extract<AlignmentDriftFlag, 'OBJECTIVE_DRIFT' | 'LOCAL_SOLUTION_PRESENTED_AS_GLOBAL'>[]
+  rationale: string
+}
+
+export interface TaskCheckpoint extends VersionedRecord {
+  sequence: number
+  trigger: CheckpointTrigger
+  issue_id: string
+  phase_id: string
+  original_objective: string
+  current_focus: string
+  resolved_items: string[]
+  open_items: string[]
+  blocked_items: string[]
+  confirmed_facts: string[]
+  unverified_claims: string[]
+  missing_evidence: string[]
+  active_constraints: string[]
+  minority_positions: string[]
+  provisional_decisions: string[]
+  next_required_actions: string[]
+  drift_flags: AlignmentDriftFlag[]
+  checkpoint_decision: CheckpointDecision
+  decision_reasons: string[]
+  semantic_review?: SemanticAlignmentReview
+}
+
+export interface SemanticReviewCandidate {
+  original_objective: string
+  current_focus: string
+  phase_id: string
+  phase_purpose: string
+  open_items: string[]
+  recent_artifacts: string[]
 }
 
 export interface ModelInvocation extends VersionedRecord {
@@ -606,10 +658,11 @@ export type EngineEvent =
   | { t: 'final_proposal'; proposal: FinalProposal }
   | { t: 'report'; markdown: string }
   | { t: 'ledger'; total_tokens: number; calls: number; by_phase: Record<string, number> }
-  | { t: 'audit_snapshot'; model_invocations: ModelInvocation[]; run_trace?: RunTraceEntry[] }
+  | { t: 'audit_snapshot'; model_invocations: ModelInvocation[]; run_trace?: RunTraceEntry[]; checkpoints?: TaskCheckpoint[] }
   | { t: 'event_rule_fired'; evaluation: EventRuleEvaluation }
   | { t: 'impasse_report'; report: ImpasseReport }
   | { t: 'terminal_report'; report: TerminalReport }
+  | { t: 'checkpoint_created'; checkpoint: TaskCheckpoint }
   | { t: 'run_done'; elapsed_ms: number; terminal_state?: TerminalState }
   | { t: 'error'; message: string }
 

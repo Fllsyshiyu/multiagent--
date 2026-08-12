@@ -41,12 +41,17 @@ export function buildScenarioSpec(userInput: string, profile: TaskProfile, agent
 }
 
 export function buildIssueGraph(userInput: string, scenarioId: string): IssueGraph {
+  const root = `${scenarioId}_root`
   return {
-    root_issue_id: `${scenarioId}_root`,
-    issues: [{
-      id: `${scenarioId}_root`, title: userInput.slice(0, 40), description: userInput,
-      depends_on: [], stakeholder_ids: [], status: 'open',
-    }],
+    root_issue_id: root,
+    issues: [
+      { id: root, title: userInput.slice(0, 40), description: userInput, depends_on: [], stakeholder_ids: [], status: 'open' },
+      { id: `${scenarioId}_stakeholders`, title: '利益相关方与目标边界', description: '确认必要参与方、原始目标、成功标准和不可变约束', depends_on: [root], stakeholder_ids: [], status: 'open' },
+      { id: `${scenarioId}_evidence`, title: '事实、证据与未知项', description: '区分已确认事实、未验证主张和证据缺口', depends_on: [root], stakeholder_ids: [], status: 'open' },
+      { id: `${scenarioId}_conflicts`, title: '决策相关冲突与少数意见', description: '识别、路由并保留事实、利益、价值、程序、权限和资源冲突', depends_on: [`${scenarioId}_stakeholders`], stakeholder_ids: [], status: 'open' },
+      { id: `${scenarioId}_solution`, title: '候选方案与执行条件', description: '形成含责任、资源、时间、风险、退出和复评机制的方案', depends_on: [`${scenarioId}_evidence`, `${scenarioId}_conflicts`], stakeholder_ids: [], status: 'open' },
+      { id: `${scenarioId}_authority`, title: '强制门槛与授权边界', description: '完成安全、证据、少数意见和最终权限检查', depends_on: [`${scenarioId}_solution`], stakeholder_ids: [], status: 'open' },
+    ],
   }
 }
 

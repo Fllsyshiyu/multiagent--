@@ -8,6 +8,7 @@ import { applyProtocolTemplate, buildProtocolTemplate, recommendProtocolTemplate
 import { aggregateDelphiRound, delphiConverged, evaluateDialecticalReview, executeProtocolRuntime, executeRobertsVote } from '../src/engine/framework/protocol-runtime'
 import { processNewEvidence } from '../src/engine/framework/evidence'
 import { buildEqualBudgetExperiment, createExperimentArm, runEqualBudgetExperiment, TRANSFER_SCENARIOS, validateTransferScenario } from '../src/engine/framework/experiments'
+import { createTaskCheckpoint } from '../src/engine/framework/checkpoints'
 import { validateAgentCoverage, validateGraph, validatePolicy, validateVote } from '../src/engine/framework/validation'
 import { compileScenario } from '../src/engine/compiler'
 import { OrchestrationEngine } from '../src/engine/engine'
@@ -210,6 +211,25 @@ export async function run() {
   assert.equal(reopenBoard.snapshot().entries.some((entry) => entry.status === 'superseded'), true)
   const unverified = processNewEvidence({ config: compiled, blackboard: reopenBoard, evidence: { ...evidence, id: 'ev_unverified', verified: false }, affectedIssueIds: [compiled.issue_graph.root_issue_id], decisionRelevant: true })
   assert.equal(unverified.accepted, false)
+  const checkpointPhase = compiled.phase_graph.phases.find((phase) => phase.id === 'propose')!
+  const missingArtifactCheckpoint = createTaskCheckpoint({ config: compiled, phase: checkpointPhase, trigger: 'PHASE_EXIT', sequence: 1, entries: [], conflicts: [], minorityPositions: [] })
+  assert.equal(missingArtifactCheckpoint.checkpoint_decision, 'RETRY_PHASE')
+  assert.ok(missingArtifactCheckpoint.drift_flags.includes('REQUIRED_ARTIFACT_MISSING'))
+  const semanticDriftCheckpoint = createTaskCheckpoint({
+    config: compiled, phase: checkpointPhase, trigger: 'PHASE_EXIT', sequence: 2,
+    entries: [{ id: 'a', version: 1, created_at: new Date().toISOString(), created_by: 'test', source_refs: [], visibility: ['public'], status: 'valid', register: 'artifacts', issue_id: compiled.issue_graph.root_issue_id, phase_id: 'propose', payload: { kind: 'FinalProposal' } }],
+    conflicts: [], minorityPositions: [], semanticReview: { aligned: false, current_focus: '讨论无关的团建活动', drift_flags: ['OBJECTIVE_DRIFT'], rationale: '当前焦点不再回答原始目标' },
+  })
+  assert.equal(semanticDriftCheckpoint.checkpoint_decision, 'HUMAN_ESCALATION')
+  const checkpointBoard = new StructuredBlackboard()
+  checkpointBoard.writeRecord({ register: 'unknowns', issueId: compiled.issue_graph.root_issue_id, phaseId: 'conflict', payload: { kind: 'EvidenceGap', claim: '采光实测数据' }, createdBy: 'test' })
+  checkpointBoard.writeRecord({ register: 'facts', issueId: compiled.issue_graph.root_issue_id, phaseId: 'conflict', payload: '采光实测数据', createdBy: 'test' })
+  const unknownAsFactCheckpoint = createTaskCheckpoint({ config: compiled, phase: compiled.phase_graph.phases.find((phase) => phase.id === 'conflict')!, trigger: 'PHASE_EXIT', sequence: 3, entries: checkpointBoard.snapshot().entries, conflicts: [], minorityPositions: [] })
+  assert.ok(unknownAsFactCheckpoint.drift_flags.includes('UNKNOWN_PROMOTED_TO_FACT'))
+  assert.equal(unknownAsFactCheckpoint.checkpoint_decision, 'RETRY_PHASE')
+  const factConflict = checkpointBoard.registerConflict({ issue_id: compiled.issue_graph.root_issue_id, conflict_type: 'fact', severity: 0.9, decision_relevant: true, claim_refs: ['claim'], resolution_status: 'open' })
+  const waitingCheckpoint = createTaskCheckpoint({ config: compiled, phase: compiled.phase_graph.phases.find((phase) => phase.id === 'report')!, trigger: 'PRE_TERMINAL', sequence: 4, entries: checkpointBoard.snapshot().entries, conflicts: [factConflict], minorityPositions: [] })
+  assert.equal(waitingCheckpoint.checkpoint_decision, 'WAITING_FOR_EVIDENCE')
   assert.equal(compiled.agent_contracts.every((agent) => agent.sop.length > 0), true)
   const events: import('../src/engine/types').EngineEvent[] = []
   const routedAgentId = compiled.agents[0].id
@@ -239,10 +259,12 @@ export async function run() {
   assert.ok(audit.blackboard.entries.length > 0)
   assert.ok(audit.blackboard.conflicts.length > 0)
   assert.ok(audit.blackboard.revisions.length > 0)
+  assert.ok(audit.blackboard.checkpoints.length >= 6)
+  assert.ok(events.some((event) => event.t === 'checkpoint_created'))
   assert.ok(audit.model_invocations.length > 0)
   assert.equal(audit.model_invocations.every((invocation) => invocation.mode === 'replay'), true)
   assert.ok(audit.model_invocations.some((invocation) => invocation.agent_id === routedAgentId && invocation.model === 'agent-specialist-model'))
-  const continuation = orchestration.submitEvidence(compiled, { id: 'ev_runtime', issue_id: compiled.issue_graph.root_issue_id, claim: '运行后补充核验材料', source: '审计机构', observed_at: new Date().toISOString(), scope: '根议题', confidence: 0.9, verified: true }, [compiled.issue_graph.root_issue_id])
+  const continuation = await orchestration.submitEvidence(compiled, { id: 'ev_runtime', issue_id: compiled.issue_graph.root_issue_id, claim: '运行后补充核验材料', source: '审计机构', observed_at: new Date().toISOString(), scope: '根议题', confidence: 0.9, verified: true }, [compiled.issue_graph.root_issue_id])
   assert.ok(continuation.phase_graph.phases.some((phase) => phase.id.startsWith('evidence_review_')))
   assert.ok(events.some((event) => event.t === 'event_rule_fired' && event.evaluation.rule_id === 'new_evidence_reopen_v1'))
 

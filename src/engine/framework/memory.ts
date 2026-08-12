@@ -1,5 +1,5 @@
 import type {
-  Artifact, BlackboardEntry, BlackboardRegister, ConflictRecord, PositionRevision,
+  Artifact, BlackboardEntry, BlackboardRegister, ConflictRecord, PositionRevision, TaskCheckpoint,
 } from '../types'
 
 function id(prefix: string): string {
@@ -10,6 +10,7 @@ export class StructuredBlackboard {
   private entries: BlackboardEntry[] = []
   private conflicts: ConflictRecord[] = []
   private revisions: PositionRevision[] = []
+  private checkpoints: TaskCheckpoint[] = []
 
   writeArtifact(input: {
     artifact: Artifact
@@ -104,8 +105,22 @@ export class StructuredBlackboard {
     return invalidated
   }
 
+  recordCheckpoint(record: TaskCheckpoint): TaskCheckpoint {
+    this.checkpoints.push(record)
+    this.writeRecord({
+      register: 'checkpoints', issueId: record.issue_id, phaseId: record.phase_id,
+      payload: record, createdBy: record.created_by, sourceRefs: record.source_refs,
+      visibility: record.visibility,
+    })
+    return record
+  }
+
+  latestCheckpoint(issueId?: string): TaskCheckpoint | undefined {
+    return [...this.checkpoints].reverse().find((checkpoint) => !issueId || checkpoint.issue_id === issueId)
+  }
+
   snapshot() {
-    return { entries: [...this.entries], conflicts: [...this.conflicts], revisions: [...this.revisions] }
+    return { entries: [...this.entries], conflicts: [...this.conflicts], revisions: [...this.revisions], checkpoints: [...this.checkpoints] }
   }
 }
 

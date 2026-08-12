@@ -168,7 +168,7 @@ export function buildDeliberationPhases(combo: StrategyCombo): Phase[] {
       id: 'conflict', name: '冲突分析', purpose: '识别领先方案、主要反对意见、少数意见、否决性风险与证据缺口',
       policy: { A: 'A3', B: 'B2', C: 'C4', D: 'D2', E: 'E1' }, protocol_id: 'structured_synthesis_v1', depends_on: ['score'],
       kind: 'analyze', config: {},
-      transitions: [{ condition: 'artifacts_valid', target: 'fishbowl_r1' }],
+      transitions: [{ condition: 'checkpoint_retry', target: 'conflict', max_retries: 1 }, { condition: 'artifacts_valid', target: 'fishbowl_r1' }],
     }),
     phase({
       id: 'fishbowl_r1', name: '鱼缸 Round 1 · 异议与回应', purpose: '内圈围绕领先方案输出 Objection / Response，外圈输出观察卡',
@@ -185,20 +185,20 @@ export function buildDeliberationPhases(combo: StrategyCombo): Phase[] {
       policy: { A: 'A4', B: 'B2', C: 'C4', D: 'D2', E: 'E3' }, modifiers: PROTOCOL_REGISTRY.fishbowl_v1.modifiers, protocol_id: 'fishbowl_v1', depends_on: ['fishbowl_r1'],
       kind: 'fishbowl', config: { round: 2, inner_size: 4, min_rotation: 2 },
       required: false, skippable_on_deadline: true,
-      transitions: [{ condition: 'artifacts_valid', target: 'propose' }],
+      transitions: [{ condition: 'checkpoint_retry', target: 'fishbowl_r2', max_retries: 1 }, { condition: 'artifacts_valid', target: 'propose' }],
       exit_conditions: ['review_round_complete'],
     }),
     phase({
       id: 'propose', name: '修订方案生成', purpose: 'Proposal Agent 汇总两轮异议与修订，形成最终候选方案',
       policy: { A: 'A3', B: 'B2', C: 'C2', D: 'D2', E: 'E1' }, protocol_id: 'structured_synthesis_v1', depends_on: ['fishbowl_r2'],
       kind: 'propose', config: {},
-      transitions: [{ condition: 'artifacts_valid', target: 'exam' }],
+      transitions: [{ condition: 'checkpoint_retry', target: 'propose', max_retries: 1 }, { condition: 'artifacts_valid', target: 'exam' }],
     }),
     phase({
       id: 'exam', name: '试卷阅卷', purpose: '红线合规门 → 客观题 → 主观 Rubric → 总成绩',
       policy: { A: 'A3', B: 'B2', C: 'C4', D: 'D2', E: 'E1' }, protocol_id: 'evidence_evaluation_v1', depends_on: ['propose'],
       kind: 'evaluate', config: {},
-      transitions: [{ condition: 'artifacts_valid', target: 'report' }],
+      transitions: [{ condition: 'checkpoint_retry', target: 'exam', max_retries: 1 }, { condition: 'artifacts_valid', target: 'report' }],
       exit_conditions: ['mandatory_gates_evaluated'],
     }),
     phase({

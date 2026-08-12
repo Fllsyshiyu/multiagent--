@@ -117,6 +117,14 @@ export class GraphExecutor {
         if (result.terminal) return result.terminal
         const transition = phase.transitions.find((candidate) => candidate.condition === result.condition)
           ?? phase.transitions.find((candidate) => candidate.condition === 'artifacts_valid')
+        if (transition?.target === phase.id && transition.max_retries !== undefined) {
+          const used = retries.get(phase.id) ?? 0
+          if (used >= transition.max_retries) {
+            this.trace.record(phase.id, 'skipped', `检查点重试次数已达上限 ${transition.max_retries}`)
+            return 'PROVISIONAL'
+          }
+          retries.set(phase.id, used + 1)
+        }
         currentId = transition?.target
       } catch (error) {
         this.trace.record(phase.id, 'failed', error instanceof Error ? error.message : String(error))

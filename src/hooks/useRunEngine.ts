@@ -5,7 +5,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type {
   AgentLLMConfig, Artifact, EngineEvent, ExamBlueprint, ExamResult, FinalProposal, LLMConfig,
-  EventRuleEvaluation, ImpasseReport, MetricsSnapshot, ModelInvocation, RunTraceEntry, StrategyCombo, TaskType, TerminalReport, TerminalState,
+  EventRuleEvaluation, ImpasseReport, MetricsSnapshot, ModelInvocation, RunTraceEntry, StrategyCombo, TaskCheckpoint, TaskType, TerminalReport, TerminalState,
 } from '../engine/types'
 import { createLLMCaller } from '../engine/llm'
 import { createScriptedCaller, type ScriptData } from '../engine/scripted'
@@ -54,6 +54,7 @@ export interface RunState {
   terminalReport: TerminalReport | null
   impasseReport: ImpasseReport | null
   eventEvaluations: EventRuleEvaluation[]
+  checkpoints: TaskCheckpoint[]
 }
 
 const initialState: RunState = {
@@ -73,6 +74,7 @@ const initialState: RunState = {
   terminalReport: null,
   impasseReport: null,
   eventEvaluations: [],
+  checkpoints: [],
 }
 
 export function useRunEngine() {
@@ -257,6 +259,7 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
         blocks,
         modelInvocations: e.model_invocations,
         runTrace: e.run_trace ?? prev.runTrace,
+        checkpoints: e.checkpoints ?? prev.checkpoints,
       }
     case 'event_rule_fired':
       return { ...prev, blocks, eventEvaluations: [...prev.eventEvaluations, e.evaluation] }
@@ -264,6 +267,8 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
       return { ...prev, blocks, impasseReport: e.report }
     case 'terminal_report':
       return { ...prev, blocks, terminalReport: e.report }
+    case 'checkpoint_created':
+      return { ...prev, blocks, checkpoints: [...prev.checkpoints, e.checkpoint] }
     case 'exam_frozen':
       pushPhaseItem({ kind: 'exam_frozen', data: e })
       return { ...prev, blocks, examBlueprint: e.blueprint }
