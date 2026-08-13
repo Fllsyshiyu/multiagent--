@@ -9,16 +9,12 @@ import type {
 } from './game-types'
 import type { Emit } from './engine'
 import type { LLMCaller } from './llm'
-import type { WerewolfRosterEntry } from './types'
+import type { GameRosterEntry } from './types'
 import { callJSON } from './llm'
 import { TokenLedger } from './ledger'
 import { policyToLegacyCombo } from './framework/registry'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-function roleName(role: string): string {
-  return { werewolf: '狼人', seer: '预言家', witch: '女巫', villager: '平民' }[role] ?? role
-}
 
 function parsePlayerCount(userInput: string): number | null {
   const match = userInput.match(/(\d+)\s*人/)
@@ -148,21 +144,21 @@ function buildPlayers(spec: GameSpec, userInput: string, playerCount?: number): 
   const presetNames = ['沈默', '阿岚', '陆一', '苏叶', '老周', '小满']
   return roleList.map((role, index) => {
     const id = `p${index + 1}`
-    const name = count === 6 ? presetNames[index] : `玩家${index + 1}`
+    const name = spec.game_type === 'werewolf' && count === 6 ? presetNames[index] : `玩家${index + 1}`
     const roleSpec = spec.roles.find((item) => item.id === role)
     return {
       id,
       name,
       role,
-      role_label: roleSpec?.name ?? roleName(role),
+      role_label: roleSpec?.name ?? role,
       team: roleSpec?.team ?? role,
       alive: true,
-      private_info: `${roleSpec?.name ?? roleName(role)} · ${roleSpec?.description ?? ''}`,
+      private_info: `${roleSpec?.name ?? role} · ${roleSpec?.description ?? ''}`,
     }
   })
 }
 
-function toRoster(players: GamePlayerState[]): WerewolfRosterEntry[] {
+function toRoster(players: GamePlayerState[]): GameRosterEntry[] {
   return players.map((player) => ({
     id: player.id,
     name: player.name,
@@ -292,7 +288,13 @@ export class GenericGameEngine {
         this.emit({
           t: 'game_event',
           event: {
-            kind: 'WerewolfAction', round: 0, actor: player.id, action: 'reveal',
+            kind: 'GameAction',
+            phase: state.phase_id,
+            phase_label: state.phase_label,
+            round: 0,
+            actor: player.id,
+            action: 'setup',
+            action_label: '初始信息',
             result: `${player.name} 获得初始信息（仅本人可见）`, visible_to: [player.id],
           },
         })
@@ -440,7 +442,7 @@ export class GenericGameEngine {
     if (!spec) return
     for (const condition of spec.win_conditions) {
       if (winCondition(state, condition)) {
-        state.winner = condition.id === 'wolf_win' || condition.team_a === 'wolf' ? 'wolf' : 'good'
+        state.winner = condition.id
         return
       }
     }
@@ -493,7 +495,7 @@ export class GenericGameEngine {
       `### 对局结果`,
       `- 存活：${state.players.filter((p) => p.alive).map((p) => `${p.name}（${p.role_label}）`).join('、') || '无'}`,
       `- 出局：${state.players.filter((p) => !p.alive).map((p) => `${p.name}（${p.role_label}）`).join('、') || '无'}`,
-      `- 胜负：${state.winner ? (state.winner === 'wolf' ? '狼人阵营' : '好人阵营') : '未分胜负'}`,
+      `- 胜负：${state.winner ? (spec.win_conditions.find((condition) => condition.id === state.winner)?.description ?? state.winner) : '未分胜负'}`,
       '',
       `### 通用框架复用`,
       `- 本局由 ${spec.name} GameSpec 声明式驱动`,

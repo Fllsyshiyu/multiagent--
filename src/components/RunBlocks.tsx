@@ -3,12 +3,12 @@
  */
 import type { JSX } from 'react'
 import type { Block, PhaseBlock } from '../hooks/useRunEngine'
-import type { ScenarioConfig, TaskProfile, TaskType, PlanScoreCard, CandidateProposal, WerewolfRosterEntry } from '../engine/types'
+import type { ScenarioConfig, TaskProfile, TaskType, PlanScoreCard, CandidateProposal, GameRosterEntry } from '../engine/types'
 import { Chip, SectionCard, BlockHeader, StrategyChips, Spinner, AgentAvatar, TokenBadge } from './common'
 import { ArtifactView, ProposalCard, ScoreMatrix } from './Artifacts'
 import { FishbowlCircle } from './Fishbowl'
 import { ExamBlueprintView, ExamResultView } from './Exam'
-import { GameActionLine, GameSpeechBubble, WerewolfRoster, WerewolfSpeechBubble, WerewolfActionLine, VoteTable } from './Werewolf'
+import { GameActionLine, GameRoster, GameSpeechBubble, VoteTable } from './Werewolf'
 import { FinalProposalView } from './Artifacts'
 import { ComplexityBlock } from './Complexity'
 
@@ -128,7 +128,7 @@ function PhaseItems({ phase, config, prevInner }: { phase: PhaseBlock; config?: 
   const elements: JSX.Element[] = []
   let deadList: string[] = []
   let rosterShown = false
-  let roster: WerewolfRosterEntry[] | undefined
+  let roster: GameRosterEntry[] | undefined
 
   // 第一遍：预收集本阶段的方案与评分（聚合渲染用）
   const proposals: CandidateProposal[] = []
@@ -224,23 +224,19 @@ function PhaseItems({ phase, config, prevInner }: { phase: PhaseBlock; config?: 
         deadList = e.dead
         if (e.roster) roster = e.roster
         if (rosterShown && prevKey !== nextKey) {
-          elements.push(<WerewolfRoster key={`roster-${idx}`} dead={deadList} roster={roster} />)
+          elements.push(<GameRoster key={`roster-${idx}`} dead={deadList} roster={roster} />)
         }
         break
       }
       case 'game_event':
         if (!rosterShown) {
           rosterShown = true
-          elements.push(<WerewolfRoster key={`roster-${idx}`} dead={deadList} roster={roster} />)
+          elements.push(<GameRoster key={`roster-${idx}`} dead={deadList} roster={roster} />)
         }
-        if (e.event.kind === 'WerewolfSpeech') {
-          elements.push(<div key={idx} className="mt-2"><WerewolfSpeechBubble speech={e.event} roster={roster} /></div>)
-        } else if (e.event.kind === 'GameSpeech') {
+        if (e.event.kind === 'GameSpeech') {
           elements.push(<div key={idx} className="mt-2"><GameSpeechBubble speech={e.event} roster={roster} /></div>)
         } else if (e.event.kind === 'GameAction') {
           elements.push(<div key={idx} className="mt-2"><GameActionLine action={e.event} roster={roster} /></div>)
-        } else {
-          elements.push(<div key={idx} className="mt-2"><WerewolfActionLine action={e.event} roster={roster} /></div>)
         }
         break
       case 'vote':

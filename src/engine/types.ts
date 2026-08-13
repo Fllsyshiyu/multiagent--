@@ -595,26 +595,7 @@ export interface ExamResult {
   grade_comment: string
 }
 
-// ============ 狼人杀扩展工件 ============
-
-export interface WerewolfSpeech {
-  kind: 'WerewolfSpeech'
-  phase: 'night' | 'day'
-  round: number
-  agent_id: string
-  audience: 'private' | 'public' // communication_mode Modifier
-  content: string
-}
-
-export interface WerewolfAction {
-  kind: 'WerewolfAction'
-  round: number
-  actor: string
-  action: 'kill' | 'check' | 'save' | 'poison' | 'vote' | 'eliminate' | 'reveal'
-  target?: string
-  result: string
-  visible_to: string[] // B3 角色路由：哪些角色可见此信息
-}
+// ============ 通用博弈扩展工件 ============
 
 /** 通用博弈发言事件。phase/action 均来自 GameSpec，不硬编码狼人杀语义。 */
 export interface GameSpeechEvent {
@@ -640,7 +621,7 @@ export interface GameActionEvent {
   visible_to: string[]
 }
 
-export interface WerewolfRosterEntry {
+export interface GameRosterEntry {
   id: string
   name: string
   role: string
@@ -683,8 +664,8 @@ export type EngineEvent =
   | { t: 'metrics'; snapshot: MetricsSnapshot }
   | { t: 'exam_frozen'; blueprint: ExamBlueprint }
   | { t: 'exam_result'; result: ExamResult }
-  | { t: 'game_event'; event: WerewolfAction | WerewolfSpeech | GameActionEvent | GameSpeechEvent }
-  | { t: 'game_state'; alive: string[]; dead: string[]; phase: string; roster?: WerewolfRosterEntry[] }
+  | { t: 'game_event'; event: GameActionEvent | GameSpeechEvent }
+  | { t: 'game_state'; alive: string[]; dead: string[]; phase: string; roster?: GameRosterEntry[] }
   | { t: 'vote'; votes: { agent_id: string; vote: string; reason: string }[]; result: string }
   | { t: 'phase_done'; phase_id: string; name: string }
   | { t: 'final_proposal'; proposal: FinalProposal }
