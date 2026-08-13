@@ -14,7 +14,7 @@ import type { ForceTrack, ScenarioConfig, TaskProfile } from '../engine/types'
 import type { Attachment } from '../lib/attachments'
 
 export interface PhaseItem {
-  kind: 'agent_start' | 'artifact' | 'speech' | 'fishbowl_plan' | 'adaptation' | 'retry' | 'game_event' | 'game_state' | 'vote' | 'exam_frozen' | 'exam_result' | 'final_proposal'
+  kind: 'agent_start' | 'artifact' | 'speech' | 'fishbowl_plan' | 'adaptation' | 'retry' | 'game_event' | 'game_state' | 'game_result' | 'vote' | 'exam_frozen' | 'exam_result' | 'final_proposal'
   data: EngineEvent
 }
 
@@ -282,6 +282,7 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
       return { ...prev, blocks, finalProposal: e.proposal }
     case 'game_event':
     case 'game_state':
+    case 'game_result':
     case 'vote':
       pushPhaseItem({ kind: e.t, data: e } as PhaseItem)
       break

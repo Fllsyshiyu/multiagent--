@@ -2,7 +2,7 @@
  * 通用博弈视图。所有文案、角色、阶段与动作均来自 GameSpec 事件，
  * 不包含任何特定游戏的硬编码。
  */
-import type { GameActionEvent, GameSpeechEvent, GameRosterEntry } from '../engine/types'
+import type { GameActionEvent, GameResult, GameSpeechEvent, GameRosterEntry } from '../engine/types'
 import { Chip } from './common'
 
 function resolveRoster(roster?: GameRosterEntry[]) {
@@ -97,6 +97,28 @@ export function VoteTable({ votes, result, roster }: { votes: { agent_id: string
       {result && (
         <div className="mt-3 rounded-md bg-neutral-900 px-3.5 py-2.5 text-[13px] font-medium leading-relaxed text-white">{result}</div>
       )}
+    </div>
+  )
+}
+
+export function GameResultCard({ result, roster }: { result: GameResult; roster?: GameRosterEntry[] }) {
+  const players = resolveRoster(roster)
+  const winners = result.winning_players.map((id) => players.find((player) => player.id === id)?.name ?? id)
+  const losers = result.losing_players.map((id) => players.find((player) => player.id === id)?.name ?? id)
+  return (
+    <div className="rounded-xl border-2 border-neutral-900 bg-neutral-900 p-5 text-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">Game Over · 第 {result.round} 轮</div>
+          <div className="mt-1 text-xl font-black">{result.winner_team === 'draw' ? '平局' : `${result.winner_label}获胜`}</div>
+        </div>
+        <Chip tone="gray">{result.reason === 'condition' ? '常规胜负条件' : '终局规则'}</Chip>
+      </div>
+      <div className="mt-3 text-[13px] leading-relaxed text-neutral-200">{result.description}</div>
+      <div className="mt-4 grid gap-2 text-[12px] sm:grid-cols-2">
+        <div className="rounded-lg bg-white/10 px-3 py-2"><span className="text-neutral-400">胜方玩家：</span>{winners.join('、') || '无'}</div>
+        <div className="rounded-lg bg-white/5 px-3 py-2"><span className="text-neutral-400">负方玩家：</span>{losers.join('、') || '无'}</div>
+      </div>
     </div>
   )
 }

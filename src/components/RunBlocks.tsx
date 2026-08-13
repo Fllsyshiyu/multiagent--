@@ -8,7 +8,7 @@ import { Chip, SectionCard, BlockHeader, StrategyChips, Spinner, AgentAvatar, To
 import { ArtifactView, ProposalCard, ScoreMatrix } from './Artifacts'
 import { FishbowlCircle } from './Fishbowl'
 import { ExamBlueprintView, ExamResultView } from './Exam'
-import { GameActionLine, GameRoster, GameSpeechBubble, VoteTable } from './Werewolf'
+import { GameActionLine, GameResultCard, GameRoster, GameSpeechBubble, VoteTable } from './Werewolf'
 import { FinalProposalView } from './Artifacts'
 import { ComplexityBlock } from './Complexity'
 
@@ -241,6 +241,9 @@ function PhaseItems({ phase, config, prevInner }: { phase: PhaseBlock; config?: 
         break
       case 'vote':
         elements.push(<div key={idx} className="mt-2"><VoteTable votes={e.votes} result={e.result} roster={roster} /></div>)
+        break
+      case 'game_result':
+        elements.push(<div key={idx} className="mt-3"><GameResultCard result={e.result} roster={roster} /></div>)
         break
     }
   })

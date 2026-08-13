@@ -225,6 +225,16 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
       }))))
     }
 
+    const gameResults = phaseBlocks.flatMap((block) => block.phase.items).filter((item) => item.kind === 'game_result' && item.data.t === 'game_result')
+    const finalGameResult = gameResults.at(-1)?.data
+    if (finalGameResult?.t === 'game_result') {
+      sections.push(section('winner', '胜负结果', [
+        { kind: 'status', label: '胜者', text: finalGameResult.result.winner_team === 'draw' ? '平局' : `${finalGameResult.result.winner_label}获胜`, tone: 'success' },
+        text(finalGameResult.result.description),
+        text(`判定方式：${finalGameResult.result.reason === 'condition' ? '常规胜负条件' : '最大回合终局规则'}`),
+      ]))
+    }
+
     const gameEvents: ReportItem[] = []
     const seenGameEvents = new Set<string>()
     const votes: string[] = []

@@ -5,11 +5,11 @@
  */
 import type {
   GameActionOutput, GameActionSpec, GamePlayerState, GamePrimitive, GameSpec, GameState,
-  GameWinConditionSpec,
+  GameTiebreakSpec, GameWinConditionSpec,
 } from './game-types'
 import type { Emit } from './engine'
 import type { LLMCaller } from './llm'
-import type { GameRosterEntry } from './types'
+import type { GameResult, GameRosterEntry } from './types'
 import { callJSON } from './llm'
 import { TokenLedger } from './ledger'
 import { policyToLegacyCombo } from './framework/registry'
@@ -108,6 +108,12 @@ export function normalizeGameSpec(raw: unknown): GameSpec {
     description: String(input.description ?? ''),
     min_players: Number(input.min_players ?? 2),
     max_players: Number(input.max_players ?? 20),
+    teams: Array.isArray(input.teams)
+      ? input.teams.map((item) => {
+        const team = item as Record<string, unknown>
+        return { id: String(team.id ?? 'team'), name: String(team.name ?? team.id ?? '阵营'), description: team.description ? String(team.description) : undefined }
+      })
+      : [...new Set(roles.map((role) => role.team))].map((team) => ({ id: team, name: team })),
     roles,
     actions,
     composition,
@@ -118,12 +124,28 @@ export function normalizeGameSpec(raw: unknown): GameSpec {
         id: String(condition.id ?? 'win'),
         description: String(condition.description ?? ''),
         type: (condition.type ?? 'llm') as GameWinConditionSpec['type'],
+        winner_team: condition.winner_team ? String(condition.winner_team) : undefined,
         role: condition.role ? String(condition.role) : undefined,
+        team: condition.team ? String(condition.team) : undefined,
         team_a: condition.team_a ? String(condition.team_a) : undefined,
         team_b: condition.team_b ? String(condition.team_b) : undefined,
       }
     }),
     fallback_rule: String(input.fallback_rule ?? ''),
+    tiebreak: input.tiebreak && typeof input.tiebreak === 'object' ? {
+      type: String((input.tiebreak as Record<string, unknown>).type ?? 'alive_count') as GameTiebreakSpec['type'],
+      team_order: Array.isArray((input.tiebreak as Record<string, unknown>).team_order)
+        ? ((input.tiebreak as Record<string, unknown>).team_order as unknown[]).map(String)
+        : undefined,
+      description: String((input.tiebreak as Record<string, unknown>).description ?? input.fallback_rule ?? '按存活人数判定胜负'),
+    } : { type: 'alive_count', description: String(input.fallback_rule ?? '按存活人数判定胜负') },
+    game_loop: input.game_loop && typeof input.game_loop === 'object' ? {
+      cycle_phase_ids: Array.isArray((input.game_loop as Record<string, unknown>).cycle_phase_ids)
+        ? ((input.game_loop as Record<string, unknown>).cycle_phase_ids as unknown[]).map(String)
+        : phases.filter((phase) => phase.kind !== 'setup' && phase.kind !== 'end').map((phase) => phase.id),
+      max_rounds: Math.max(1, Number((input.game_loop as Record<string, unknown>).max_rounds ?? 5)),
+      break_on_winner: (input.game_loop as Record<string, unknown>).break_on_winner !== false,
+    } : undefined,
   }
 }
 
@@ -131,13 +153,15 @@ export function normalizeGameSpec(raw: unknown): GameSpec {
 export function buildRoleList(spec: GameSpec, playerCount: number): string[] {
   const count = Math.max(spec.min_players, Math.min(spec.max_players, Math.floor(playerCount)))
   const roles: string[] = []
-  for (const fixed of spec.composition.fixed) {
-    for (let i = 0; i < fixed.count; i++) roles.push(fixed.role)
-  }
+  // 比例阵营优先，保证 p1... 可稳定映射到主要对抗方；固定特殊角色随后分配。
+  // 这既兼容回放剧本，也让所有 GameSpec 的名单顺序可预测。
   for (const ratio of spec.composition.ratio) {
     let amount = Math.max(ratio.min ?? 1, Math.floor(count / ratio.denominator))
     amount = Math.min(amount, ratio.max ?? amount)
     for (let i = 0; i < amount; i++) roles.push(ratio.role)
+  }
+  for (const fixed of spec.composition.fixed) {
+    for (let i = 0; i < fixed.count; i++) roles.push(fixed.role)
   }
   while (roles.length < count) roles.push(spec.composition.fill_role)
   return roles.slice(0, count)
@@ -192,12 +216,32 @@ function winCondition(state: GameState, condition: GameWinConditionSpec): boolea
   if (condition.type === 'role_eliminated' && condition.role) {
     return !alive.some((player) => player.role === condition.role)
   }
+  if (condition.type === 'team_eliminated' && condition.team) {
+    return !alive.some((player) => player.team === condition.team)
+  }
   if (condition.type === 'team_ge' && condition.team_a && condition.team_b) {
     const a = alive.filter((player) => player.team === condition.team_a).length
     const b = alive.filter((player) => player.team === condition.team_b).length
     return a >= b
   }
+  if (condition.type === 'last_team') {
+    return new Set(alive.map((player) => player.team)).size === 1
+  }
   return false
+}
+
+function inferWinnerTeam(state: GameState, condition: GameWinConditionSpec): string {
+  if (condition.winner_team) return condition.winner_team
+  if (condition.type === 'team_ge' && condition.team_a) return condition.team_a
+  if (condition.type === 'role_eliminated' && condition.role) {
+    const eliminatedTeam = state.players.find((player) => player.role === condition.role)?.team
+    return state.players.find((player) => player.team !== eliminatedTeam)?.team ?? 'unknown'
+  }
+  if (condition.type === 'team_eliminated' && condition.team) {
+    return state.players.find((player) => player.team !== condition.team)?.team ?? 'unknown'
+  }
+  const aliveTeams = [...new Set(state.players.filter((player) => player.alive).map((player) => player.team))]
+  return aliveTeams.length === 1 ? aliveTeams[0] : 'unknown'
 }
 
 export class GenericGameEngine {
@@ -229,6 +273,10 @@ export class GenericGameEngine {
       public_log: [],
       private_logs: {},
       winner: null,
+      winner_team: null,
+      winner_description: null,
+      winner_label: null,
+      result_reason: null,
     }
 
     const loop = spec.game_loop
@@ -264,6 +312,8 @@ export class GenericGameEngine {
       }
     }
 
+    if (!state.winner) this.applyTiebreak(spec, state)
+    this.emitGameResult(spec, state)
     this.emitReport(spec, userInput, state)
     this.emit({ t: 'game_state', alive: state.players.filter((p) => p.alive).map((p) => p.id), dead: state.players.filter((p) => !p.alive).map((p) => p.id), phase: 'end', roster: toRoster(state.players) })
     this.emit({ t: 'ledger', ...this.ledger.snapshot() })
@@ -336,8 +386,7 @@ export class GenericGameEngine {
 
   private participantsFor(role: string, state: GameState): GamePlayerState[] {
     if (role === 'all') return state.players.filter((player) => player.alive)
-    const matched = state.players.filter((player) => player.alive && player.role === role)
-    return matched.length > 0 ? matched : state.players.filter((player) => player.alive)
+    return state.players.filter((player) => player.alive && player.role === role)
   }
 
   private normalizeActionOutput(data: GameActionOutput): GameActionOutput {
@@ -466,6 +515,7 @@ export class GenericGameEngine {
       })
     }
     state.votes = []
+    this.runJudgeForState(state, this.currentSpec)
   }
 
   private runJudge(spec: GameSpec, state: GameState) {
@@ -477,9 +527,53 @@ export class GenericGameEngine {
     for (const condition of spec.win_conditions) {
       if (winCondition(state, condition)) {
         state.winner = condition.id
+        state.winner_team = inferWinnerTeam(state, condition)
+        state.winner_description = condition.description
+        state.winner_label = spec.teams?.find((team) => team.id === state.winner_team)?.name ?? state.winner_team
+        state.result_reason = 'condition'
         return
       }
     }
+  }
+
+
+  private applyTiebreak(spec: GameSpec, state: GameState) {
+    const rule = spec.tiebreak ?? { type: 'alive_count' as const, description: spec.fallback_rule || '按存活人数判定胜负' }
+    const counts = new Map<string, number>()
+    for (const player of state.players.filter((item) => item.alive)) {
+      counts.set(player.team, (counts.get(player.team) ?? 0) + 1)
+    }
+    const teams = [...new Set(spec.roles.map((role) => role.team))]
+    let winnerTeam = 'draw'
+    if (rule.type === 'team_priority') {
+      winnerTeam = rule.team_order?.find((team) => (counts.get(team) ?? 0) > 0) ?? teams[0] ?? 'draw'
+    } else if (rule.type === 'alive_count') {
+      const order = rule.team_order ?? teams
+      winnerTeam = [...order].sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0))[0] ?? 'draw'
+    }
+    state.winner = `tiebreak_${winnerTeam}`
+    state.winner_team = winnerTeam
+    state.winner_description = rule.description
+    state.winner_label = winnerTeam === 'draw' ? '平局' : (spec.teams?.find((team) => team.id === winnerTeam)?.name ?? winnerTeam)
+    state.result_reason = 'tiebreak'
+  }
+
+  private emitGameResult(spec: GameSpec, state: GameState) {
+    const team = state.winner_team ?? 'unknown'
+    const winningPlayers = state.players.filter((player) => player.team === team).map((player) => player.id)
+    const result: GameResult = {
+      game_type: spec.game_type,
+      game_name: spec.name,
+      winner_id: state.winner ?? 'unknown',
+      winner_team: team,
+      winner_label: state.winner_label ?? (team === 'draw' ? '平局' : team),
+      description: state.winner_description ?? spec.fallback_rule,
+      reason: state.result_reason ?? 'tiebreak',
+      round: state.round,
+      winning_players: winningPlayers,
+      losing_players: state.players.filter((player) => !winningPlayers.includes(player.id)).map((player) => player.id),
+    }
+    this.emit({ t: 'game_result', result })
   }
 
   private emitAction(action: GameActionSpec, state: GameState, player: GamePlayerState, data: GameActionOutput) {
@@ -529,7 +623,9 @@ export class GenericGameEngine {
       `### 对局结果`,
       `- 存活：${state.players.filter((p) => p.alive).map((p) => `${p.name}（${p.role_label}）`).join('、') || '无'}`,
       `- 出局：${state.players.filter((p) => !p.alive).map((p) => `${p.name}（${p.role_label}）`).join('、') || '无'}`,
-      `- 胜负：${state.winner ? (spec.win_conditions.find((condition) => condition.id === state.winner)?.description ?? state.winner) : '未分胜负'}`,
+      `- 胜者：${state.winner_team === 'draw' ? '平局' : `${state.winner_label ?? state.winner_team}`}`,
+      `- 判定：${state.winner_description ?? spec.fallback_rule}`,
+      `- 判定方式：${state.result_reason === 'condition' ? '常规胜负条件' : '最大回合终局规则'}`,
       '',
       `### 通用框架复用`,
       `- 本局由 ${spec.name} GameSpec 声明式驱动`,
@@ -548,18 +644,22 @@ export async function generateGameSpec(caller: LLMCaller, userInput: string, rul
     description: '<规则概述>',
     min_players: 2,
     max_players: 20,
+    teams: [{ id: '<team_id>', name: '<阵营显示名>' }],
     roles: [{ id: '<role_id>', name: '<角色名>', team: '<阵营>', description: '<能力说明>', actions: ['<action_id>'] }],
     actions: [{ id: '<action_id>', name: '<动作名>', primitive: '<见下方原语>', role: '<角色或all>', audience: 'self|team|public|god', prompt: '<给Agent的指令>', output_schema: '<JSON schema>' }],
     composition: { fixed: [], ratio: [], fill_role: '<角色id>' },
     phases: [{ id: '<phase_id>', name: '<阶段名>', purpose: '<阶段目的>', kind: 'setup|action|speak|vote|end', participants: 'all|all_alive|["role"]', actions: ['<action_id>'], policy: { A: 'A1', B: 'B1', C: 'C1', D: 'D1', E: 'E1' }, order: 'sequential' }],
-    win_conditions: [{ id: '<win_id>', description: '<胜负条件>', type: 'role_eliminated|team_ge|llm' }],
+    win_conditions: [{ id: '<win_id>', description: '<胜负条件>', type: 'role_eliminated|team_eliminated|team_ge|last_team', winner_team: '<获胜阵营>' }],
     fallback_rule: '<无法判定时的兜底规则>',
+    tiebreak: { type: 'alive_count|team_priority|draw', team_order: ['<优先阵营>'], description: '<最大回合后的明确胜负规则>' },
+    game_loop: { cycle_phase_ids: ['<循环阶段id>'], max_rounds: 5, break_on_winner: true },
   })
   const { data } = await callJSON<GameSpec>(
     caller,
     `你是通用博弈规则编译器。你的任务是把用户指定的游戏转换成可执行的 GameSpec，而不是复制任何已有模板。
 禁止默认输出狼人杀规则。必须依据用户描述或下方检索到的规则，真实描述该游戏的阵营、角色能力、回合流程和胜负条件。
 可用原语：assign_roles, private_chat, select_target, inspect_role, mark_dead, revive, poison, decide_life, public_speech, vote, resolve_night, resolve_vote, judge_winner。
+必须提供至少两个可区分阵营、可执行的 win_conditions、game_loop 和 tiebreak，保证每局最终明确胜者或明确平局。
 phases 必须包含至少一个非 setup/end 的阶段；每个非系统动作都必须指定执行它的角色。只输出 JSON。`,
     `用户输入：${userInput}
 ${ruleContext ? `检索到的游戏规则：\n${ruleContext}\n` : ''}

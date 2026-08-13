@@ -8,8 +8,7 @@ const tempDir = path.join(root, 'node_modules', '.tmp', 'engine-tests')
 await mkdir(tempDir, { recursive: true })
 const entry = path.join(tempDir, 'entry.ts')
 const outfile = path.join(tempDir, 'bundle.mjs')
-const esbuildDir = path.join(root, 'node_modules', '.pnpm', 'esbuild@0.28.2', 'node_modules', 'esbuild')
-const { build } = await import(pathToFileURL(path.join(esbuildDir, 'lib', 'main.js')).href)
+const { build } = await import('esbuild')
 
 await writeFile(entry, `
 import { run } from '../../../scripts/engine-selftest.ts'

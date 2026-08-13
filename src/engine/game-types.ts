@@ -66,7 +66,17 @@ export interface GameState {
   pending_save?: boolean
   pending_poison?: string
   winner?: string | null
+  winner_team?: string | null
+  winner_description?: string | null
+  winner_label?: string | null
+  result_reason?: 'condition' | 'tiebreak' | null
   votes?: { agent_id: string; vote: string; reason: string }[]
+}
+
+export interface GameTeamSpec {
+  id: string
+  name: string
+  description?: string
 }
 
 export interface GameRoleSpec {
@@ -105,10 +115,20 @@ export interface GameLoopSpec {
 export interface GameWinConditionSpec {
   id: string
   description: string
-  type: 'role_eliminated' | 'team_ge' | 'llm'
+  type: 'role_eliminated' | 'team_eliminated' | 'team_ge' | 'last_team' | 'llm'
+  /** 条件满足后获胜的阵营。旧规格可省略，由 team_a 或存活阵营推断。 */
+  winner_team?: string
   role?: string
+  team?: string
   team_a?: string
   team_b?: string
+}
+
+export interface GameTiebreakSpec {
+  /** 最大回合仍未触发常规胜负条件时，必须使用的终局规则。 */
+  type: 'alive_count' | 'team_priority' | 'draw'
+  team_order?: string[]
+  description: string
 }
 
 export interface GameSpec {
@@ -117,11 +137,14 @@ export interface GameSpec {
   description: string
   min_players: number
   max_players: number
+  teams?: GameTeamSpec[]
   roles: GameRoleSpec[]
   actions: GameActionSpec[]
   composition: GameCompositionSpec
   phases: GamePhaseSpec[]
   win_conditions: GameWinConditionSpec[]
   fallback_rule: string
+  /** 保证对局不会以含糊的“未分胜负”结束。 */
+  tiebreak?: GameTiebreakSpec
   game_loop?: GameLoopSpec
 }

@@ -14,6 +14,8 @@ import { compileScenario } from '../src/engine/compiler'
 import { OrchestrationEngine } from '../src/engine/engine'
 import { createScriptedCaller } from '../src/engine/scripted'
 import { elevatorScript } from '../src/data/scripts/elevator'
+import { GenericGameEngine, buildRoleList, normalizeGameSpec } from '../src/engine/game-engine'
+import { CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, WEREWOLF_SPEC } from '../src/engine/game-specs'
 
 function testPhase(input: Partial<Phase> & Pick<Phase, 'id' | 'kind'>): Phase {
   const policy = input.policy ?? { A: 'A1', B: 'B2', C: 'C1', D: 'D1', E: 'E1' }
@@ -192,6 +194,27 @@ export async function run() {
     const recommendations = recommendProtocolTemplates(transfer.profile)
     assert.ok(transfer.expected_protocols.some((protocol) => recommendations.includes(protocol)), `${transfer.id} should match a transfer protocol`)
   }
+
+  // 通用阵营对抗：狼人杀只是一个 GameSpec，应用预设共享同一运行时与明确胜负语义。
+  assert.ok(GAME_REGISTRY.cyber_defense === CYBER_DEFENSE_SPEC)
+  assert.ok(GAME_REGISTRY.fraud_audit === FRAUD_AUDIT_SPEC)
+  assert.equal(buildRoleList(CYBER_DEFENSE_SPEC, 6).length, 6)
+  const normalizedGame = normalizeGameSpec({ ...WEREWOLF_SPEC, tiebreak: undefined })
+  assert.equal(normalizedGame.tiebreak?.type, 'alive_count')
+  const gameEvents: import('../src/engine/types').EngineEvent[] = []
+  const gameCaller: import('../src/engine/llm').LLMCaller = async (system) => {
+    const id = system.match(/（(p\d+)）/)?.[1] ?? ''
+    if (system.includes('最终的袭击目标')) return { text: JSON.stringify({ target: 'p6' }), tokens: 1 }
+    if (system.includes('查验身份')) return { text: JSON.stringify({ target: 'p1', reason: '测试' }), tokens: 1 }
+    if (system.includes('女巫')) return { text: JSON.stringify({ use_antidote: false, poison_target: null }), tokens: 1 }
+    if (system.includes('投出你认为最像狼人')) return { text: JSON.stringify({ target: id === 'p1' ? 'p2' : 'p1', reason: '测试票' }), tokens: 1 }
+    return { text: JSON.stringify({ content: '测试发言', suggest_target: 'p6' }), tokens: 1 }
+  }
+  await new GenericGameEngine(gameCaller, (event) => gameEvents.push(event), { fast: true }).run(WEREWOLF_SPEC, '6人狼人杀', { playerCount: 6 })
+  const gameResult = gameEvents.find((event) => event.t === 'game_result')
+  assert.ok(gameResult?.t === 'game_result')
+  assert.equal(gameResult?.t === 'game_result' ? gameResult.result.winner_team : undefined, 'good')
+  assert.ok(gameEvents.findIndex((event) => event.t === 'game_result') < gameEvents.findIndex((event) => event.t === 'run_done'))
 
   const caller = createScriptedCaller(elevatorScript)
   const compiled = await compileScenario(caller, '电梯议事端到端自测', elevatorScript.dispatch, () => {})

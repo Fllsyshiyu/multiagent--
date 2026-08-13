@@ -621,6 +621,19 @@ export interface GameActionEvent {
   visible_to: string[]
 }
 
+export interface GameResult {
+  game_type: string
+  game_name: string
+  winner_id: string
+  winner_team: string
+  winner_label: string
+  description: string
+  reason: 'condition' | 'tiebreak'
+  round: number
+  winning_players: string[]
+  losing_players: string[]
+}
+
 export interface GameRosterEntry {
   id: string
   name: string
@@ -666,6 +679,7 @@ export type EngineEvent =
   | { t: 'exam_result'; result: ExamResult }
   | { t: 'game_event'; event: GameActionEvent | GameSpeechEvent }
   | { t: 'game_state'; alive: string[]; dead: string[]; phase: string; roster?: GameRosterEntry[] }
+  | { t: 'game_result'; result: GameResult }
   | { t: 'vote'; votes: { agent_id: string; vote: string; reason: string }[]; result: string }
   | { t: 'phase_done'; phase_id: string; name: string }
   | { t: 'final_proposal'; proposal: FinalProposal }

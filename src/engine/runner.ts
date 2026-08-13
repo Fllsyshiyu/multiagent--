@@ -21,6 +21,8 @@ function resolveGameTypeAlias(userInput: string, dispatcherGameType: string): st
   const aliases: [RegExp, string][] = [
     [/谁是卧底|卧底游戏/, 'undercover'],
     [/杀人游戏|警察.*杀手|杀手.*警察/, 'mafia'],
+    [/网络安全|红蓝对抗|攻防演练|入侵检测/, 'cyber_defense'],
+    [/反舞弊|舞弊调查|内鬼调查|企业审计/, 'fraud_audit'],
     [/狼人杀/, 'werewolf'],
     [/阿瓦隆|抵抗组织/, 'avalon'],
     [/德州扑克|扑克/, 'poker'],

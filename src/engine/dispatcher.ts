@@ -13,11 +13,13 @@ import type { ForceTrack } from './types'
 const DISPATCH_SYSTEM = `你是 MA-Collab 编排框架的 Dispatcher。你的任务不是回答用户，而是对用户输入进行场景分类，输出一个 TaskProfile JSON。
 判断规则：
 1. agent_count：任务本质上需要几个智能体？简单执行类任务（写邮件、翻译、问答）=1；需要多角色协商/模拟的 >1。
-2. task_type：agent_count=1 → "single"；多方协作议事、应急规划、多视角决策 → "collaborative"；明确的博弈游戏（狼人杀、谁是卧底、杀人游戏、阿瓦隆、扑克、谈判对抗、竞拍）→ "competitive"。
+2. task_type：agent_count=1 → "single"；多方协作议事、应急规划、多视角决策 → "collaborative"；明确的博弈或对抗模拟（狼人杀、谁是卧底、杀人游戏、网络安全红蓝对抗、反舞弊调查、阿瓦隆、扑克、谈判对抗、竞拍）→ "competitive"。
 3. game_type：competitive 时必须给出该游戏的具体英文标识，且必须与用户描述的游戏严格对应：
    - 狼人杀 → "werewolf"
    - 谁是卧底 / 谁是卧底游戏 → "undercover"
    - 杀人游戏 / 警察杀手平民 → "mafia"
+   - 网络安全红蓝对抗 / 攻防演练 → "cyber_defense"
+   - 企业反舞弊 / 内鬼调查 → "fraud_audit"
    - 阿瓦隆 / 抵抗组织 → "avalon"
    - 扑克 / 德州扑克 → "poker"
    - 其他博弈用其英文名或拼音。禁止把非狼人杀游戏误判为 "werewolf"。
@@ -26,7 +28,7 @@ const DISPATCH_SYSTEM = `你是 MA-Collab 编排框架的 Dispatcher。你的任
 const DISPATCH_SCHEMA = `{
   "agent_count": <int>,
   "task_type": "single" | "collaborative" | "competitive",
-  "game_type": "<werewolf | undercover | mafia | avalon | poker | 其他英文标识；非博弈任务为 null>",
+  "game_type": "<werewolf | undercover | mafia | cyber_defense | fraud_audit | avalon | poker | 其他英文标识；非博弈任务为 null>",
   "domain": "<领域，如 governance / disaster / business / game>",
   "time_pressure": "urgent" | "sustained" | "relaxed",
   "information_asymmetry": "high" | "medium" | "low",
