@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { PRESETS, type Preset } from '../data/presets'
-import { LLM_PRESETS, type AgentLLMConfig, type LLMConfig, type ScenarioConfig } from '../engine/types'
+import { LLM_PRESETS, type AgentLLMConfig, type LLMProfile, type LLMSettings, type ScenarioConfig } from '../engine/types'
 import { useRunEngine } from '../hooks/useRunEngine'
 import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
@@ -13,25 +13,15 @@ import { ComplexityBlock } from '../components/Complexity'
 import { ReportPanel } from '../components/ReportPanel'
 import { Paperclip, X } from 'lucide-react'
 import { parseAttachment, type Attachment } from '../lib/attachments'
-
-const LLM_STORAGE_KEY = 'ma_collab_llm_config'
-
-function loadLLMConfig(): LLMConfig | null {
-  try {
-    const raw = localStorage.getItem(LLM_STORAGE_KEY)
-    if (!raw) return null
-    const cfg = JSON.parse(raw)
-    if (cfg.api_key && cfg.base_url && cfg.model) return cfg
-    return null
-  } catch {
-    return null
-  }
-}
+import {
+  activeLLMProfile, createLLMProfileId, EMPTY_LLM_SETTINGS, LLM_STORAGE_KEY, loadLLMSettings, saveLLMSettings,
+} from '../lib/llm-settings'
 
 export default function Home() {
   const { state, start, reset, analyze, clearStaged, delibMode, setDelibMode } = useRunEngine()
   const [input, setInput] = useState('')
-  const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(loadLLMConfig)
+  const [llmSettings, setLlmSettings] = useState<LLMSettings>(loadLLMSettings)
+  const llmConfig = activeLLMProfile(llmSettings)
   const [showApiPanel, setShowApiPanel] = useState(false)
   const [selectedPreset, setSelectedPreset] = useState<Preset | null>(null)
   const [agentLLMConfig, setAgentLLMConfig] = useState<AgentLLMConfig | undefined>()
@@ -315,7 +305,8 @@ export default function Home() {
           {showAgentConfig && state.stagedConfig && (
             <AgentConfigPanel
               config={state.stagedConfig}
-              baseConfig={llmConfig}
+              profiles={llmSettings.profiles}
+              activeProfileId={llmSettings.active_profile_id}
               onConfirm={(nextConfig) => { setAgentLLMConfig(nextConfig); handleConfirmRun(nextConfig) }}
               onCancel={() => clearStaged()}
             />
@@ -422,9 +413,9 @@ export default function Home() {
       {/* API 配置面板 */}
       {showApiPanel && (
         <ApiPanel
-          config={llmConfig}
-          onSave={(cfg) => { setLlmConfig(cfg); setShowApiPanel(false) }}
-          onClear={() => { localStorage.removeItem(LLM_STORAGE_KEY); setLlmConfig(null); setShowApiPanel(false) }}
+          settings={llmSettings}
+          onSave={(settings) => { saveLLMSettings(settings); setLlmSettings(settings); setShowApiPanel(false) }}
+          onClear={() => { localStorage.removeItem(LLM_STORAGE_KEY); setLlmSettings(EMPTY_LLM_SETTINGS); setShowApiPanel(false) }}
           onClose={() => setShowApiPanel(false)}
         />
       )}
@@ -439,35 +430,34 @@ export default function Home() {
 
 function AgentConfigPanel({
   config,
-  baseConfig,
+  profiles,
+  activeProfileId,
   onConfirm,
   onCancel,
 }: {
   config: ScenarioConfig
-  baseConfig: LLMConfig | null
+  profiles: LLMProfile[]
+  activeProfileId: string
   onConfirm: (config: AgentLLMConfig | undefined) => void
   onCancel: () => void
 }) {
   const [mode, setMode] = useState<'shared' | 'per_agent'>('shared')
-  const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(config.agents.map((agent) => [agent.id, baseConfig?.model ?? LLM_PRESETS[0].model])),
+  const defaultProfileId = profiles.some((profile) => profile.id === activeProfileId) ? activeProfileId : profiles[0]?.id ?? ''
+  const [perAgentProfileIds, setPerAgentProfileIds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(config.agents.map((agent) => [agent.id, defaultProfileId])),
   )
-  const [sharedModel, setSharedModel] = useState(baseConfig?.model ?? LLM_PRESETS[0].model)
-  const modelChoices = [...new Set([baseConfig?.model, ...LLM_PRESETS.map((preset) => preset.model)].filter((model): model is string => Boolean(model)))]
-
-  const configForModel = (model: string): LLMConfig | undefined => {
-    if (!baseConfig) return undefined
-    return { ...baseConfig, model }
-  }
+  const [sharedProfileId, setSharedProfileId] = useState(defaultProfileId)
+  const profileForId = (profileId: string) => profiles.find((profile) => profile.id === profileId)
 
   const confirm = () => {
-    if (!baseConfig) return onConfirm(undefined)
-    if (mode === 'shared') return onConfirm({ mode, shared: configForModel(sharedModel) })
+    const shared = profileForId(sharedProfileId) ?? profiles[0]
+    if (!shared) return onConfirm(undefined)
+    if (mode === 'shared') return onConfirm({ mode, shared })
     const perAgent = Object.fromEntries(config.agents.flatMap((agent) => {
-      const selected = configForModel(perAgentConfigs[agent.id] ?? baseConfig.model)
+      const selected = profileForId(perAgentProfileIds[agent.id] ?? defaultProfileId)
       return selected ? [[agent.id, selected]] : []
     }))
-    onConfirm({ mode, shared: baseConfig, per_agent: perAgent })
+    onConfirm({ mode, shared, per_agent: perAgent })
   }
 
   return (
@@ -515,13 +505,13 @@ function AgentConfigPanel({
             {mode === 'per_agent' && (
               <div className="mt-2">
                 <select
-                  value={perAgentConfigs[a.id] ?? LLM_PRESETS[0].model}
-                  onChange={(e) => setPerAgentConfigs((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                  value={perAgentProfileIds[a.id] ?? defaultProfileId}
+                  onChange={(e) => setPerAgentProfileIds((prev) => ({ ...prev, [a.id]: e.target.value }))}
                   className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] text-neutral-800 outline-none focus:border-neutral-900"
                 >
-                  {modelChoices.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name} · {profile.model}
                     </option>
                   ))}
                 </select>
@@ -535,13 +525,13 @@ function AgentConfigPanel({
         <div className="mt-3">
           <label className="mb-1 block text-[12px] font-medium text-neutral-600">统一基座模型</label>
           <select
-            value={sharedModel}
-            onChange={(e) => setSharedModel(e.target.value)}
+            value={sharedProfileId}
+            onChange={(e) => setSharedProfileId(e.target.value)}
             className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-800 outline-none focus:border-neutral-900"
           >
-            {modelChoices.map((model) => (
-              <option key={model} value={model}>
-                {model}
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name} · {profile.model}
               </option>
             ))}
           </select>
@@ -550,11 +540,12 @@ function AgentConfigPanel({
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <span className="text-[11px] text-neutral-400">
-          {mode === 'shared' ? `所有 Agent 使用统一模型` : `${Object.keys(perAgentConfigs).length} 个 Agent 分别指定模型`} · 共用当前 API 端点与 Key
+          {mode === 'shared' ? '所有 Agent 使用统一配置' : `${Object.keys(perAgentProfileIds).length} 个 Agent 可分别使用独立端点与 Key`}
         </span>
         <button
           onClick={confirm}
-          className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700"
+          disabled={profiles.length === 0}
+          className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-200"
         >
           确认并启动议事
         </button>
@@ -563,10 +554,38 @@ function AgentConfigPanel({
   )
 }
 
-function ApiPanel({ config, onSave, onClear, onClose }: { config: LLMConfig | null; onSave: (c: LLMConfig) => void; onClear: () => void; onClose: () => void }) {
-  const [base, setBase] = useState(config?.base_url ?? LLM_PRESETS[0].base_url)
-  const [key, setKey] = useState(config?.api_key ?? '')
-  const [model, setModel] = useState(config?.model ?? LLM_PRESETS[0].model)
+function ApiPanel({ settings, onSave, onClear, onClose }: { settings: LLMSettings; onSave: (settings: LLMSettings) => void; onClear: () => void; onClose: () => void }) {
+  const initialProfile = (): LLMProfile => ({
+    id: createLLMProfileId(),
+    name: LLM_PRESETS[0].name,
+    base_url: LLM_PRESETS[0].base_url,
+    api_key: '',
+    model: LLM_PRESETS[0].model,
+  })
+  const [profiles, setProfiles] = useState<LLMProfile[]>(() => settings.profiles.length ? settings.profiles : [initialProfile()])
+  const [selectedProfileId, setSelectedProfileId] = useState(() => settings.active_profile_id || profiles[0].id)
+  const [activeProfileId, setActiveProfileId] = useState(() => settings.active_profile_id || profiles[0].id)
+  const selected = profiles.find((profile) => profile.id === selectedProfileId) ?? profiles[0]
+  const allComplete = profiles.length > 0 && profiles.every((profile) => profile.name.trim() && profile.base_url.trim() && profile.api_key.trim() && profile.model.trim())
+
+  const updateSelected = (patch: Partial<LLMProfile>) => {
+    setProfiles((current) => current.map((profile) => profile.id === selected.id ? { ...profile, ...patch } : profile))
+  }
+
+  const addProfile = () => {
+    const profile = initialProfile()
+    setProfiles((current) => [...current, profile])
+    setSelectedProfileId(profile.id)
+  }
+
+  const removeSelected = () => {
+    const remaining = profiles.filter((profile) => profile.id !== selected.id)
+    const nextProfiles = remaining.length ? remaining : [initialProfile()]
+    const nextSelectedId = nextProfiles[0].id
+    setProfiles(nextProfiles)
+    setSelectedProfileId(nextSelectedId)
+    if (activeProfileId === selected.id) setActiveProfileId(nextSelectedId)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
@@ -576,13 +595,26 @@ function ApiPanel({ config, onSave, onClear, onClose }: { config: LLMConfig | nu
           <button onClick={onClose} className="text-neutral-400 hover:text-neutral-900">✕</button>
         </div>
         <p className="mt-1.5 text-[12.5px] leading-relaxed text-neutral-500">
-          使用 OpenAI 兼容协议，浏览器直连服务商。Key 仅存于本机 localStorage，只发往下方 Base URL 对应的服务商。
+          每套基座模型独立保存 Base URL、API Key 和模型名。Agent 分配时会使用整套配置，不再共用同一个 Key。
         </p>
+        <div className="mt-4 flex items-center gap-2">
+          <select
+            value={selected.id}
+            onChange={(event) => setSelectedProfileId(event.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[12.5px] outline-none focus:border-neutral-900"
+          >
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>{profile.name || '未命名配置'} · {profile.model || '未填写模型'}{profile.id === activeProfileId ? '（默认）' : ''}</option>
+            ))}
+          </select>
+          <button onClick={addProfile} className="rounded-lg border border-neutral-200 px-3 py-2 text-[12px] font-medium text-neutral-600 hover:border-neutral-900">新增</button>
+          <button onClick={removeSelected} className="rounded-lg border border-neutral-200 px-3 py-2 text-[12px] text-neutral-400 hover:border-red-300 hover:text-red-600">删除</button>
+        </div>
         <div className="mt-4 flex flex-wrap gap-1.5">
           {LLM_PRESETS.map((p) => (
             <button
               key={p.name}
-              onClick={() => { setBase(p.base_url); setModel(p.model) }}
+              onClick={() => updateSelected({ name: p.name, base_url: p.base_url, model: p.model, api_key: selected.base_url === p.base_url ? selected.api_key : '' })}
               className="rounded-md border border-neutral-200 px-2.5 py-1 text-[12px] font-medium text-neutral-600 hover:border-neutral-900 hover:text-neutral-900"
             >
               {p.name}
@@ -591,35 +623,50 @@ function ApiPanel({ config, onSave, onClear, onClose }: { config: LLMConfig | nu
         </div>
         <div className="mt-4 space-y-3">
           <div>
+            <label className="mb-1 block text-[12px] font-medium text-neutral-600">配置名称</label>
+            <input value={selected.name} onChange={(e) => updateSelected({ name: e.target.value })} placeholder="例如：DeepSeek 主账号" className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] outline-none focus:border-neutral-900" />
+          </div>
+          <div>
             <label className="mb-1 block text-[12px] font-medium text-neutral-600">Base URL</label>
-            <input value={base} onChange={(e) => setBase(e.target.value)} className="w-full rounded-lg border border-neutral-200 px-3 py-2 font-mono text-[12.5px] outline-none focus:border-neutral-900" />
+            <input value={selected.base_url} onChange={(e) => updateSelected({ base_url: e.target.value })} className="w-full rounded-lg border border-neutral-200 px-3 py-2 font-mono text-[12.5px] outline-none focus:border-neutral-900" />
           </div>
           <div>
             <label className="mb-1 block text-[12px] font-medium text-neutral-600">API Key</label>
-            <input value={key} onChange={(e) => setKey(e.target.value)} type="password" placeholder="sk-…" className="w-full rounded-lg border border-neutral-200 px-3 py-2 font-mono text-[12.5px] outline-none focus:border-neutral-900" />
+            <input value={selected.api_key} onChange={(e) => updateSelected({ api_key: e.target.value })} type="password" placeholder="sk-…" className="w-full rounded-lg border border-neutral-200 px-3 py-2 font-mono text-[12.5px] outline-none focus:border-neutral-900" />
           </div>
           <div>
             <label className="mb-1 block text-[12px] font-medium text-neutral-600">模型</label>
-            <input value={model} onChange={(e) => setModel(e.target.value)} className="w-full rounded-lg border border-neutral-200 px-3 py-2 font-mono text-[12.5px] outline-none focus:border-neutral-900" />
+            <input value={selected.model} onChange={(e) => updateSelected({ model: e.target.value })} className="w-full rounded-lg border border-neutral-200 px-3 py-2 font-mono text-[12.5px] outline-none focus:border-neutral-900" />
           </div>
         </div>
         <div className="mt-5 flex items-center justify-between">
           <button onClick={onClear} className="text-[12.5px] text-neutral-400 hover:text-red-600">清除已存配置</button>
-          <button
-            onClick={() => {
-              if (!base.trim() || !key.trim() || !model.trim()) return
-              const cfg = { base_url: base.trim(), api_key: key.trim(), model: model.trim() }
-              localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(cfg))
-              onSave(cfg)
-            }}
-            disabled={!key.trim()}
-            className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-200"
-          >
-            保存并启用 Live 模式
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveProfileId(selected.id)}
+              className={`rounded-lg border px-3 py-2 text-[12px] font-medium ${selected.id === activeProfileId ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 text-neutral-600 hover:border-neutral-900'}`}
+            >
+              {selected.id === activeProfileId ? '当前默认' : '设为默认'}
+            </button>
+            <button
+              onClick={() => {
+                if (!allComplete) return
+                onSave({
+                  version: 2,
+                  active_profile_id: profiles.some((profile) => profile.id === activeProfileId) ? activeProfileId : profiles[0].id,
+                  profiles: profiles.map((profile) => ({ ...profile, name: profile.name.trim(), base_url: profile.base_url.trim(), api_key: profile.api_key.trim(), model: profile.model.trim() })),
+                })
+              }}
+              disabled={!allComplete}
+              className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-200"
+            >
+              保存全部配置
+            </button>
+          </div>
         </div>
         <p className="mt-3 rounded-lg bg-neutral-50 px-3 py-2 text-[11.5px] leading-relaxed text-neutral-500">
-          提示：浏览器直连要求服务商允许跨域调用。DeepSeek、Moonshot 通常支持。
+          共 {profiles.length} 套独立配置。Key 仅保存在本机 localStorage，并只会发送到该配置对应的 Base URL。
+          浏览器直连要求服务商允许跨域调用。DeepSeek、Moonshot 通常支持。
           注意 Moonshot 国内站（platform.moonshot.cn）与国际站（platform.moonshot.ai）的 API Key 不通用，
           需与 Base URL 一一对应，否则返回 401。
         </p>

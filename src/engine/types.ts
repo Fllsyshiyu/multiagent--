@@ -702,6 +702,18 @@ export interface LLMConfig {
   temperature?: number
 }
 
+/** 可持久化、可由 Agent 直接引用的一套完整基座模型配置。 */
+export interface LLMProfile extends LLMConfig {
+  id: string
+  name: string
+}
+
+export interface LLMSettings {
+  version: 2
+  active_profile_id: string
+  profiles: LLMProfile[]
+}
+
 export interface AgentLLMConfig {
   mode: 'shared' | 'per_agent'
   shared?: LLMConfig
