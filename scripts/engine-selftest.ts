@@ -14,6 +14,12 @@ import { compileScenario } from '../src/engine/compiler'
 import { OrchestrationEngine } from '../src/engine/engine'
 import { createScriptedCaller } from '../src/engine/scripted'
 import { elevatorScript } from '../src/data/scripts/elevator'
+import { werewolfScript } from '../src/data/scripts/werewolfScript'
+import { parseGameRequest, parsePlayerCount } from '../src/engine/game-request'
+import { dispatch } from '../src/engine/dispatcher'
+import { AVALON_SPEC, WEREWOLF_SPEC } from '../src/engine/game-specs'
+import { buildPlayers, buildRoleList, GenericGameEngine, normalizeGameSpec } from '../src/engine/game-engine'
+import { createReplayCaller } from '../src/engine/replay'
 
 function testPhase(input: Partial<Phase> & Pick<Phase, 'id' | 'kind'>): Phase {
   const policy = input.policy ?? { A: 'A1', B: 'B2', C: 'C1', D: 'D1', E: 'E1' }
@@ -27,6 +33,44 @@ function testPhase(input: Partial<Phase> & Pick<Phase, 'id' | 'kind'>): Phase {
 }
 
 export async function run() {
+  assert.deepEqual(parseGameRequest('12个人玩狼人杀'), { gameType: 'werewolf', playerCount: 12 })
+  assert.deepEqual(parseGameRequest('请让八位玩家进行阿瓦隆'), { gameType: 'avalon', playerCount: 8 })
+  assert.equal(parsePlayerCount('十二名玩家开局'), 12)
+
+  // 复现旧问题：即使底层错误地加载六人狼人杀脚本，显式输入也必须纠偏为 8 人阿瓦隆。
+  const corrected = await dispatch(createScriptedCaller(werewolfScript), '8个人玩阿瓦隆')
+  assert.equal(corrected.profile.game_type, 'avalon')
+  assert.equal(corrected.profile.agent_count, 8)
+  assert.equal(corrected.profile.task_type, 'competitive')
+
+  const twelveWerewolfPlayers = buildPlayers(WEREWOLF_SPEC, '12个人玩狼人杀')
+  assert.equal(twelveWerewolfPlayers.length, 12)
+  assert.equal(twelveWerewolfPlayers.filter((player) => player.role === 'werewolf').length, 4)
+
+  assert.equal(buildRoleList(AVALON_SPEC, 8).length, 8)
+  const eightAvalonPlayers = buildPlayers(AVALON_SPEC, '8个人玩阿瓦隆')
+  assert.equal(eightAvalonPlayers.length, 8)
+  assert.equal(eightAvalonPlayers.filter((player) => player.team === 'good').length, 5)
+  assert.equal(eightAvalonPlayers.filter((player) => player.team === 'evil').length, 3)
+  assert.ok(eightAvalonPlayers.some((player) => player.role === 'merlin'))
+  assert.ok(eightAvalonPlayers.some((player) => player.role === 'assassin'))
+
+  const normalizedAvalon = normalizeGameSpec(AVALON_SPEC)
+  assert.deepEqual(normalizedAvalon.game_loop?.cycle_phase_ids, ['proposal', 'team_vote', 'quest'])
+  assert.equal(normalizedAvalon.composition.by_player_count?.['8'].length, 8)
+
+  const avalonEvents: import('../src/engine/types').EngineEvent[] = []
+  const avalonGame = new GenericGameEngine(createReplayCaller('8个人玩阿瓦隆'), (event) => avalonEvents.push(event), { fast: true })
+  await avalonGame.run(AVALON_SPEC, '8个人玩阿瓦隆')
+  const avalonSetup = avalonEvents.find((event) => event.t === 'game_state' && event.phase === 'setup')
+  assert.equal(avalonSetup?.t === 'game_state' ? avalonSetup.roster?.length : 0, 8)
+  const avalonProposalState = avalonEvents.find((event) => event.t === 'game_state' && event.phase === 'proposal')
+  assert.equal(avalonProposalState?.t === 'game_state' ? avalonProposalState.roster?.length : 0, 8)
+  assert.ok(avalonEvents.some((event) => event.t === 'phase_start' && event.name === '队长提名队伍'))
+  assert.ok(avalonEvents.some((event) => event.t === 'game_event' && event.event.kind === 'GameAction' && event.event.action === 'resolve_quest'))
+  assert.ok(avalonEvents.some((event) => event.t === 'report' && event.markdown.includes('阿瓦隆 对局复盘')))
+  assert.ok(avalonEvents.some((event) => event.t === 'run_done'))
+
   assert.equal(Object.keys(STRATEGY_REGISTRY).length, 20)
   assert.deepEqual(Object.keys(STRATEGY_REGISTRY).filter((id) => id.startsWith('A')), ['A1', 'A2', 'A3', 'A4'])
   assert.ok(!('A5' in STRATEGY_REGISTRY))

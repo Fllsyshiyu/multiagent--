@@ -25,6 +25,13 @@ function loadLLMConfig(): LLMConfig | null {
   }
 }
 
+function resolveReplayScript(input: string, preset: Preset | null, hasLiveConfig: boolean) {
+  if (hasLiveConfig) return null
+  const normalized = input.trim()
+  if (preset && normalized === preset.input.trim()) return preset.script
+  return PRESETS.find((candidate) => normalized === candidate.input.trim())?.script ?? null
+}
+
 export default function Home() {
   const { state, start, reset, analyze, clearStaged, delibMode, setDelibMode } = useRunEngine()
   const [input, setInput] = useState('')
@@ -50,7 +57,7 @@ export default function Home() {
     const finalInput = text ?? input
     if (!finalInput.trim()) return
     const p = preset ?? selectedPreset
-    const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
+    const script = resolveReplayScript(finalInput, p, Boolean(llmConfig))
     analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode })
   }
 
@@ -58,7 +65,7 @@ export default function Home() {
     const finalInput = input.trim()
     if (!finalInput) return
     const p = selectedPreset
-    const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
+    const script = resolveReplayScript(finalInput, p, Boolean(llmConfig))
     start(finalInput, {
       llm: llmConfig,
       agentLLM: selectedAgentLLM ?? agentLLMConfig,
@@ -175,7 +182,10 @@ export default function Home() {
           <div className="mt-10 rounded-2xl border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
             <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                if (selectedPreset && e.target.value.trim() !== selectedPreset.input.trim()) setSelectedPreset(null)
+              }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAnalyze() } }}
               placeholder="例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…"
               rows={3}
@@ -183,7 +193,7 @@ export default function Home() {
             />
             <div className="flex items-center justify-between px-4 pb-3">
               <span className="text-[12px] text-neutral-400">
-                {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 将播放预录演示'}
+                {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 预设回放 / 注册博弈离线运行'}
               </span>
               <button
                 onClick={() => handleAnalyze()}
@@ -234,7 +244,7 @@ export default function Home() {
           {showCompetitiveConfirm && (
             <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5 text-center">
               <p className="text-[13px] text-neutral-700">
-                分析完成：此任务判定为<strong>博弈轨道</strong>，确认后将加载对应 Game Extension。
+                分析完成：识别为 <strong>{state.stagedProfile?.agent_count} 人 · {state.stagedProfile?.game_type}</strong>，确认后加载对应 GameSpec。
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
                 <button onClick={() => clearStaged()} className="rounded-lg border border-neutral-200 px-4 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:bg-neutral-100">取消</button>

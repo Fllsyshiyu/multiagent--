@@ -22,9 +22,9 @@ Dispatcher（一次 LLM 调用，~300 tokens）
     │           全员独立首发 → 方案归并 → 轻量评分 → 冲突分析
     │           → 鱼缸两轮（按冲突数据选内圈 + 摘要继承 + ≥2 席轮换）
     │           → 修订方案 → 试卷阅卷（红线门 + 客观 40 + 主观 60）→ 报告
-    └── task_type = competitive → GameRegistry 加载 werewolf 扩展
-            复用 A5 私聊 / B5 权限信息 / A3 全体发言 / E7 投票
-            核心框架零改动
+    └── task_type = competitive → 解析 game_type + player_count → GameRegistry
+            内置狼人杀 / 谁是卧底 / 杀人游戏 / 阿瓦隆 GameSpec
+            未注册游戏由 Live 模型生成 GameSpec，统一交给 GenericGameEngine
 ```
 
 ## 五级 Query 复杂度
@@ -51,7 +51,7 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 ## 双模式运行
 
 - **Live 模式**：在界面填入 OpenAI 兼容端点（Base URL + API Key + 模型），浏览器直连服务商，Dispatcher 分类、Agent 生成、每场发言、阅卷评分全部实时生成。Key 仅存于浏览器 localStorage，只发往用户自选服务商。
-- **回放模式**：无 Key 时播放四个预录剧本（写通知 / 电梯加装 / 广场舞 / 狼人杀）。回放也是真实引擎在执行，只是 LLM 应答换成剧本——共用同一条数据契约。
+- **回放模式**：无 Key 时，原样点击预设会播放对应固定剧本；自由输入已注册博弈（例如“12 个人玩狼人杀”“8 个人玩阿瓦隆”）会按输入动态组装人数、角色和阶段，并使用本地确定性 Agent 应答。编辑预设文本后不会继续复用旧剧本。
 
 ## 健壮性设计
 
@@ -87,7 +87,11 @@ src/
 │   ├── dispatcher.ts  #   一句话分类 + 30 格决策表 + 组合规则校验
 │   ├── compiler.ts    #   Scenario Compiler 六步
 │   ├── engine.ts      #   编排引擎主循环（Open-first Fishbowl）
-│   ├── werewolf.ts    #   狼人杀博弈扩展
+│   ├── game-request.ts#   游戏类型与人数的确定性解析
+│   ├── game-specs.ts  #   内置声明式游戏规则（含阿瓦隆）
+│   ├── game-engine.ts #   通用博弈运行时与动作原语
+│   ├── replay.ts      #   自由博弈输入的离线确定性应答
+│   ├── werewolf.ts    #   旧版狼人杀扩展（兼容保留）
 │   ├── llm.ts         #   浏览器 LLM 客户端（双保险 + 400 降级）
 │   ├── normalize.ts   #   结构归一化（异常输出不中断运行）
 │   ├── scripted.ts    #   剧本化应答（回放模式）

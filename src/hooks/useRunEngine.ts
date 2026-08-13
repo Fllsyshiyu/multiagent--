@@ -8,7 +8,8 @@ import type {
   EventRuleEvaluation, ImpasseReport, MetricsSnapshot, ModelInvocation, RunTraceEntry, StrategyCombo, TaskCheckpoint, TaskType, TerminalReport, TerminalState,
 } from '../engine/types'
 import { createLLMCaller } from '../engine/llm'
-import { createScriptedCaller, type ScriptData } from '../engine/scripted'
+import type { ScriptData } from '../engine/scripted'
+import { createReplayCaller } from '../engine/replay'
 import { analyzeInput, runInput, type PreparedRun } from '../engine/runner'
 import type { ForceTrack, ScenarioConfig, TaskProfile } from '../engine/types'
 
@@ -93,7 +94,7 @@ export function useRunEngine() {
       setState({ ...initialState, status: 'running' })
       const caller = opts.llm
         ? createLLMCaller(opts.llm)
-        : createScriptedCaller(opts.script!)
+        : createReplayCaller(input, opts.script)
       const guardedApply = (e: EngineEvent) => {
         if (runId === runIdRef.current) apply(e)
       }
@@ -127,7 +128,7 @@ export function useRunEngine() {
       setState({ ...initialState, status: 'running', modelInvocations: preparedInvocations })
       const caller = opts.llm
         ? createLLMCaller(opts.llm)
-        : createScriptedCaller(opts.script!)
+        : createReplayCaller(input, opts.script)
       const perAgentCallers = new Map<string, ReturnType<typeof createLLMCaller>>()
       if (opts.agentLLM?.mode === 'per_agent') {
         for (const [agentId, config] of Object.entries(opts.agentLLM.per_agent ?? {})) {

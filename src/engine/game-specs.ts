@@ -70,6 +70,9 @@ export const WEREWOLF_SPEC: GameSpec = {
     fixed: [{ role: 'seer', count: 1 }, { role: 'witch', count: 1 }],
     ratio: [{ role: 'werewolf', denominator: 3, min: 2 }],
     fill_role: 'villager',
+    by_player_count: {
+      '6': ['werewolf', 'werewolf', 'seer', 'witch', 'villager', 'villager'],
+    },
   },
   phases: [
     { id: 'setup', name: '秘密角色分派', purpose: '身份按 B3 角色路由，仅本人可见', kind: 'setup', participants: 'all', actions: [], policy: POLICY.setup, order: 'sequential' },
@@ -79,8 +82,8 @@ export const WEREWOLF_SPEC: GameSpec = {
     { id: 'end', name: '复盘', purpose: '胜负判定与策略复用清单', kind: 'end', participants: 'all', actions: [], policy: POLICY.end, order: 'sequential' },
   ],
   win_conditions: [
-    { id: 'good_win', description: '所有狼人被淘汰，好人阵营获胜', type: 'role_eliminated', role: 'werewolf' },
-    { id: 'wolf_win', description: '狼人数量不少于好人数量，狼人阵营获胜', type: 'team_ge', team_a: 'wolf', team_b: 'good' },
+    { id: 'good_win', description: '所有狼人被淘汰，好人阵营获胜', type: 'role_eliminated', role: 'werewolf', winner: 'good', winner_label: '好人阵营获胜' },
+    { id: 'wolf_win', description: '狼人数量不少于好人数量，狼人阵营获胜', type: 'team_ge', team_a: 'wolf', team_b: 'good', winner: 'wolf', winner_label: '狼人阵营获胜' },
   ],
   fallback_rule: '若胜负尚不明确，则本局作为一个完整昼夜循环的演示，继续追踪存活玩家与阵营。',
   game_loop: {
@@ -129,8 +132,8 @@ export const UNDERCOVER_SPEC: GameSpec = {
     { id: 'end', name: '复盘', purpose: '公布双方词语与胜负', kind: 'end', participants: 'all', actions: [], policy: POLICY.end, order: 'sequential' },
   ],
   win_conditions: [
-    { id: 'civilian_win', description: '卧底被投票淘汰，平民阵营获胜', type: 'role_eliminated', role: 'spy' },
-    { id: 'spy_win', description: '场上平民数量不高于卧底数量，卧底获胜', type: 'team_ge', team_a: 'spy', team_b: 'civilian' },
+    { id: 'civilian_win', description: '卧底被投票淘汰，平民阵营获胜', type: 'role_eliminated', role: 'spy', winner: 'civilian', winner_label: '平民阵营获胜' },
+    { id: 'spy_win', description: '场上平民数量不高于卧底数量，卧底获胜', type: 'team_ge', team_a: 'spy', team_b: 'civilian', winner: 'spy', winner_label: '卧底获胜' },
   ],
   fallback_rule: '达到最大轮次仍未分胜负时，公布词语并判定卧底成功隐藏。',
   game_loop: {
@@ -201,8 +204,8 @@ export const MAFIA_SPEC: GameSpec = {
     { id: 'end', name: '复盘', purpose: '胜负判定与阵营复盘', kind: 'end', participants: 'all', actions: [], policy: POLICY.end, order: 'sequential' },
   ],
   win_conditions: [
-    { id: 'good_win', description: '所有杀手被淘汰，好人阵营获胜', type: 'role_eliminated', role: 'killer' },
-    { id: 'killer_win', description: '杀手数量不少于好人数量，杀手阵营获胜', type: 'team_ge', team_a: 'killer', team_b: 'good' },
+    { id: 'good_win', description: '所有杀手被淘汰，好人阵营获胜', type: 'role_eliminated', role: 'killer', winner: 'good', winner_label: '好人阵营获胜' },
+    { id: 'killer_win', description: '杀手数量不少于好人数量，杀手阵营获胜', type: 'team_ge', team_a: 'killer', team_b: 'good', winner: 'killer', winner_label: '杀手阵营获胜' },
   ],
   fallback_rule: '达到最大轮次仍未分胜负时，判定剩余人数多的一方获胜。',
   game_loop: {
@@ -212,9 +215,130 @@ export const MAFIA_SPEC: GameSpec = {
   },
 }
 
+export const AVALON_SPEC: GameSpec = {
+  game_type: 'avalon',
+  name: '阿瓦隆',
+  description: '好人和邪恶阵营围绕五次任务进行隐藏身份博弈：队长提名队伍、全员表决、入队者秘密执行任务；好人完成三次任务后还要躲过刺客对梅林的刺杀。',
+  min_players: 5,
+  max_players: 10,
+  roles: [
+    {
+      id: 'merlin', name: '梅林', team: 'good',
+      description: '知道大多数邪恶玩家，但必须隐藏身份；若三次任务成功后被刺客认出，好人仍会失败。', actions: [],
+      knowledge: { teams: ['evil'], except_roles: ['mordred'], label: '你看到的邪恶玩家（莫德雷德除外）' },
+    },
+    {
+      id: 'percival', name: '派西维尔', team: 'good',
+      description: '看到梅林与莫甘娜，但不知道两者谁是真梅林。', actions: [],
+      knowledge: { roles: ['merlin', 'morgana'], label: '你看到的两名“梅林候选”' },
+    },
+    { id: 'loyal', name: '忠臣', team: 'good', description: '没有额外身份信息，通过组队和任务结果判断邪恶阵营。', actions: [] },
+    {
+      id: 'assassin', name: '刺客', team: 'evil',
+      description: '与邪恶同伴破坏任务；若好人先完成三次任务，可以刺杀梅林实现翻盘。', actions: ['assassinate'],
+      knowledge: { teams: ['evil'], except_roles: ['oberon'], label: '你知道的邪恶同伴' },
+    },
+    {
+      id: 'morgana', name: '莫甘娜', team: 'evil',
+      description: '在派西维尔视野中伪装成梅林，并协助邪恶阵营破坏任务。', actions: [],
+      knowledge: { teams: ['evil'], except_roles: ['oberon'], label: '你知道的邪恶同伴' },
+    },
+    {
+      id: 'mordred', name: '莫德雷德', team: 'evil',
+      description: '梅林看不到你的邪恶身份。', actions: [],
+      knowledge: { teams: ['evil'], except_roles: ['oberon'], label: '你知道的邪恶同伴' },
+    },
+    { id: 'oberon', name: '奥伯伦', team: 'evil', description: '不认识其他邪恶玩家，其他邪恶玩家也看不到你。', actions: [] },
+  ],
+  actions: [
+    {
+      id: 'propose_team', name: '队长提名', primitive: 'propose_team', role: '__leader', audience: 'public',
+      prompt: '你是本轮队长「{name}」（{id}）。结合公开记录与自己的秘密信息，提名规定人数的任务队伍。',
+      output_schema: '{"team":["<玩家id>"],"reason":"<40字内提名理由>"}',
+    },
+    {
+      id: 'approve_team', name: '组队表决', primitive: 'approve_team', role: 'all', audience: 'public',
+      prompt: '你是「{name}」（{id}）。请对当前提名队伍独立投下赞成或反对票。',
+      output_schema: '{"approve":<true|false>,"reason":"<30字内理由>"}',
+    },
+    {
+      id: 'resolve_team_vote', name: '组队计票', primitive: 'resolve_team_vote', role: '__system', audience: 'public',
+      prompt: '统计组队票。', output_schema: '{}',
+    },
+    {
+      id: 'quest_vote', name: '秘密执行任务', primitive: 'quest_vote', role: '__proposed_team', audience: 'self',
+      prompt: '你已进入任务队伍。好人必须提交成功票；邪恶玩家可以选择成功或失败以隐藏或破坏任务。',
+      output_schema: '{"quest_success":<true|false>,"reason":"<仅供自己记录的简短策略>"}',
+    },
+    {
+      id: 'resolve_quest', name: '任务结算', primitive: 'resolve_quest', role: '__system', audience: 'public',
+      prompt: '只公布成功/失败票数量并结算任务，不公开投票者。', output_schema: '{}',
+    },
+    {
+      id: 'assassinate', name: '刺杀梅林', primitive: 'assassinate', role: 'assassin', audience: 'public',
+      prompt: '好人已完成三次任务。你是刺客，请根据整局组队与发言选择你认为是梅林的玩家。',
+      output_schema: '{"target":"<玩家id>","reason":"<40字内判断>"}',
+    },
+    {
+      id: 'resolve_assassination', name: '刺杀结算', primitive: 'resolve_assassination', role: '__system', audience: 'public',
+      prompt: '公布刺杀目标身份并结算最终胜负。', output_schema: '{}',
+    },
+  ],
+  composition: {
+    fixed: [], ratio: [], fill_role: 'loyal',
+    by_player_count: {
+      '5': ['merlin', 'percival', 'loyal', 'assassin', 'morgana'],
+      '6': ['merlin', 'percival', 'loyal', 'loyal', 'assassin', 'morgana'],
+      '7': ['merlin', 'percival', 'loyal', 'loyal', 'assassin', 'morgana', 'oberon'],
+      '8': ['merlin', 'percival', 'loyal', 'loyal', 'loyal', 'assassin', 'morgana', 'mordred'],
+      '9': ['merlin', 'percival', 'loyal', 'loyal', 'loyal', 'loyal', 'assassin', 'morgana', 'mordred'],
+      '10': ['merlin', 'percival', 'loyal', 'loyal', 'loyal', 'loyal', 'assassin', 'morgana', 'mordred', 'oberon'],
+    },
+  },
+  phases: [
+    { id: 'setup', name: '秘密身份分派', purpose: '每名玩家仅获得自己的身份与规则允许的秘密信息', kind: 'setup', participants: 'all', actions: [], policy: POLICY.setup, order: 'sequential' },
+    { id: 'proposal', name: '队长提名队伍', purpose: '轮换队长并按当前任务人数提名队伍', kind: 'action', participants: 'all_alive', actions: ['propose_team'], policy: POLICY.day, order: 'sequential' },
+    { id: 'team_vote', name: '全员组队表决', purpose: '过半赞成才允许该队伍执行任务', kind: 'vote', participants: 'all_alive', actions: ['approve_team', 'resolve_team_vote'], policy: POLICY.vote, order: 'simultaneous' },
+    { id: 'quest', name: '秘密任务与结算', purpose: '入队者秘密提交任务票；必要时进入刺杀阶段', kind: 'action', participants: 'all_alive', actions: ['quest_vote', 'resolve_quest', 'assassinate', 'resolve_assassination'], policy: POLICY.night, order: 'simultaneous' },
+    { id: 'end', name: '身份揭示与复盘', purpose: '公布角色、任务轨迹与最终胜负', kind: 'end', participants: 'all', actions: [], policy: POLICY.end, order: 'sequential' },
+  ],
+  win_conditions: [
+    { id: 'avalon_runtime', description: '由任务比分、连续否决与刺杀阶段共同判定', type: 'llm' },
+  ],
+  fallback_rule: '五次任务内先取得三次任务失败的邪恶阵营获胜；好人三次成功后，刺客命中梅林则邪恶翻盘，否则好人获胜。连续五次组队被否决时邪恶阵营获胜。',
+  game_loop: {
+    cycle_phase_ids: ['proposal', 'team_vote', 'quest'],
+    max_rounds: 25,
+    break_on_winner: true,
+  },
+  quest_rules: {
+    team_sizes_by_player_count: {
+      '5': [2, 3, 2, 3, 3],
+      '6': [2, 3, 4, 3, 4],
+      '7': [2, 3, 3, 4, 4],
+      '8': [3, 4, 4, 5, 5],
+      '9': [3, 4, 4, 5, 5],
+      '10': [3, 4, 4, 5, 5],
+    },
+    fail_threshold_by_player_count: {
+      '7': { '4': 2 }, '8': { '4': 2 }, '9': { '4': 2 }, '10': { '4': 2 },
+    },
+    successes_to_win: 3,
+    failures_to_win: 3,
+    max_rejected_teams: 5,
+    assassin_role: 'assassin',
+    protected_role: 'merlin',
+    good_team: 'good',
+    evil_team: 'evil',
+    good_win_label: '亚瑟忠臣阵营获胜',
+    evil_win_label: '莫德雷德阵营获胜',
+  },
+}
+
 /** 内置游戏注册表。未知游戏不应在这里逐一追加，而应由 Dispatcher 动态生成 GameSpec。 */
 export const GAME_REGISTRY: Record<string, GameSpec> = {
   werewolf: WEREWOLF_SPEC,
   undercover: UNDERCOVER_SPEC,
   mafia: MAFIA_SPEC,
+  avalon: AVALON_SPEC,
 }

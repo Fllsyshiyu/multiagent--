@@ -4,7 +4,7 @@
 import type { GameActionEvent, GameSpeechEvent, WerewolfAction, WerewolfRosterEntry, WerewolfSpeech } from '../engine/types'
 import { Chip } from './common'
 
-export const WEREWOLF_PLAYERS: WerewolfRosterEntry[] = [
+const WEREWOLF_PLAYERS: WerewolfRosterEntry[] = [
   { id: 'p1', name: '沈默', role: 'werewolf', role_label: '狼人', team: 'wolf' },
   { id: 'p2', name: '阿岚', role: 'werewolf', role_label: '狼人', team: 'wolf' },
   { id: 'p3', name: '陆一', role: 'seer', role_label: '预言家', team: 'good' },
@@ -17,27 +17,31 @@ function resolveRoster(roster?: WerewolfRosterEntry[]) {
   return roster?.length ? roster : WEREWOLF_PLAYERS
 }
 
+function isAdversarialTeam(team?: string) {
+  return ['wolf', 'evil', 'killer', 'spy'].includes(team ?? '')
+}
+
 export function WerewolfRoster({ dead = [], roster }: { dead?: string[]; roster?: WerewolfRosterEntry[] }) {
   const players = resolveRoster(roster)
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-4">
       <div className="flex items-center justify-between">
-        <span className="text-[13px] font-bold text-neutral-900">玩家 · 上帝视角</span>
+        <span className="text-[13px] font-bold text-neutral-900">玩家 · 全知视角</span>
         <Chip tone="black">初始信息仅本人可见</Chip>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {players.map((p) => {
           const isDead = dead.includes(p.id)
           return (
-            <div key={p.id} className={`rounded-lg border p-2.5 text-center transition-all ${isDead ? 'border-neutral-200 bg-neutral-100 opacity-40' : p.team === 'wolf' ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white'}`}>
+            <div key={p.id} className={`rounded-lg border p-2.5 text-center transition-all ${isDead ? 'border-neutral-200 bg-neutral-100 opacity-40' : isAdversarialTeam(p.team) ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white'}`}>
               <div className={`text-[14px] font-bold ${isDead ? 'line-through' : ''}`}>{p.name}</div>
-              <div className={`mt-0.5 text-[11px] ${p.team === 'wolf' && !isDead ? 'text-neutral-300' : 'text-neutral-400'}`}>{p.role_label}</div>
-              <div className={`mt-1 font-mono text-[10px] ${p.team === 'wolf' && !isDead ? 'text-neutral-500' : 'text-neutral-300'}`}>{p.id}</div>
+              <div className={`mt-0.5 text-[11px] ${isAdversarialTeam(p.team) && !isDead ? 'text-neutral-300' : 'text-neutral-400'}`}>{p.role_label}</div>
+              <div className={`mt-1 font-mono text-[10px] ${isAdversarialTeam(p.team) && !isDead ? 'text-neutral-500' : 'text-neutral-300'}`}>{p.id}</div>
             </div>
           )
         })}
       </div>
-      <div className="mt-2 text-[11px] text-neutral-400">深色 = 特殊阵营（观众视角揭示；对局中其他玩家不可见）</div>
+      <div className="mt-2 text-[11px] text-neutral-400">深色 = 对抗阵营（仅全知视角揭示；对局中其他玩家不可见）</div>
     </div>
   )
 }
@@ -48,7 +52,7 @@ export function WerewolfSpeechBubble({ speech, roster }: { speech: WerewolfSpeec
   const isPrivate = speech.audience === 'private'
   return (
     <div className={`flex gap-2.5 ${isPrivate ? 'opacity-95' : ''}`}>
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${p?.team === 'wolf' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'}`}>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${isAdversarialTeam(p?.team) ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'}`}>
         {p?.name.slice(0, 1) ?? '?'}
       </span>
       <div className={`max-w-[85%] rounded-lg px-3.5 py-2.5 ${isPrivate ? 'border border-dashed border-neutral-900 bg-neutral-900 text-white' : 'border border-neutral-200 bg-white'}`}>
@@ -72,7 +76,7 @@ export function GameSpeechBubble({ speech, roster }: { speech: GameSpeechEvent; 
   const isPrivate = speech.audience === 'private'
   return (
     <div className={`flex gap-2.5 ${isPrivate ? 'opacity-95' : ''}`}>
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${p?.team === 'wolf' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'}`}>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${isAdversarialTeam(p?.team) ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'}`}>
         {p?.name.slice(0, 1) ?? '?'}
       </span>
       <div className={`max-w-[85%] rounded-lg px-3.5 py-2.5 ${isPrivate ? 'border border-dashed border-neutral-900 bg-neutral-900 text-white' : 'border border-neutral-200 bg-white'}`}>
@@ -133,7 +137,7 @@ export function VoteTable({ votes, result, roster }: { votes: { agent_id: string
           <div key={i} className="flex items-center gap-2 text-[13px]">
             <span className="w-16 font-medium text-neutral-800">{players.find((p) => p.id === v.agent_id)?.name}</span>
             <span className="text-neutral-400">→</span>
-            <span className={`font-semibold ${players.find((p) => p.id === v.vote)?.team === 'wolf' ? 'text-neutral-900 underline decoration-2' : 'text-neutral-700'}`}>{players.find((p) => p.id === v.vote)?.name}</span>
+            <span className={`font-semibold ${isAdversarialTeam(players.find((p) => p.id === v.vote)?.team) ? 'text-neutral-900 underline decoration-2' : 'text-neutral-700'}`}>{players.find((p) => p.id === v.vote)?.name}</span>
             <span className="truncate text-[12px] text-neutral-400">{v.reason}</span>
           </div>
         ))}
