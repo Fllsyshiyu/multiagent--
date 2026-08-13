@@ -256,6 +256,19 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
 }
 
 export async function exportReportAsPdf(element: HTMLElement, filename: string): Promise<void> {
+  const pdf = await renderReportPdf(element)
+  const safeName = filename.replace(/[\\/:*?"<>|]/g, '-')
+  pdf.save(`${safeName}.pdf`)
+}
+
+export async function printReportAsPdf(element: HTMLElement): Promise<void> {
+  const pdf = await renderReportPdf(element)
+  pdf.autoPrint()
+  const blobUrl = pdf.output('bloburl') as unknown as string
+  window.open(blobUrl, '_blank')
+}
+
+async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
   // 克隆到离屏容器，避免模态框的 fixed 定位与滚动容器干扰 html2canvas 渲染。
   const wrapper = document.createElement('div')
   wrapper.style.position = 'fixed'
@@ -269,27 +282,42 @@ export async function exportReportAsPdf(element: HTMLElement, filename: string):
   document.body.appendChild(wrapper)
 
   try {
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
     const pageWidth = 210
     const pageHeight = 297
     const margin = 10
     const contentWidth = pageWidth - margin * 2
     const contentHeight = pageHeight - margin * 2
-    let blocks = Array.from(wrapper.querySelectorAll<HTMLElement>('[data-report-block]'))
-    if (blocks.length === 0) blocks = [wrapper]
+    const scale = 2
+    // 完整渲染一次，保证所有块在同一个布局宽度下换行，避免逐块渲染造成文字裁剪。
+    const fullCanvas = await html2canvas(wrapper, {
+      scale,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+    })
+    const wrapperRect = wrapper.getBoundingClientRect()
+    const blocks = Array.from(wrapper.querySelectorAll<HTMLElement>('[data-report-block]'))
+    if (blocks.length === 0) blocks.push(wrapper)
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
     let y = margin
 
     for (const block of blocks) {
-      const canvas = await html2canvas(block, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-      })
-      const imageData = canvas.toDataURL('image/png')
-      const imageHeight = (canvas.height * contentWidth) / canvas.width
+      const blockRect = block.getBoundingClientRect()
+      const sx = Math.round((blockRect.left - wrapperRect.left) * scale)
+      const sy = Math.round((blockRect.top - wrapperRect.top) * scale)
+      const sw = Math.max(1, Math.round(blockRect.width * scale))
+      const sh = Math.max(1, Math.round(blockRect.height * scale))
+      const crop = document.createElement('canvas')
+      crop.width = sw
+      crop.height = sh
+      const context = crop.getContext('2d')
+      if (!context) continue
+      context.drawImage(fullCanvas, sx, sy, sw, sh, 0, 0, sw, sh)
+      const imageData = crop.toDataURL('image/png')
+      const imageHeight = (sh * contentWidth) / sw
       if (imageHeight > contentHeight) {
-        // 单个内容块超过一页时按固定高度切片，避免无限高图片。
+        // 单个块异常超长时按固定页高切片，属于极端兜底。
         let heightLeft = imageHeight
         let position = 0
         pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
@@ -311,8 +339,7 @@ export async function exportReportAsPdf(element: HTMLElement, filename: string):
       pdf.addImage(imageData, 'PNG', margin, y, contentWidth, imageHeight)
       y += imageHeight + 2
     }
-    const safeName = filename.replace(/[\\/:*?"<>|]/g, '-')
-    pdf.save(`${safeName}.pdf`)
+    return pdf
   } finally {
     document.body.removeChild(wrapper)
   }

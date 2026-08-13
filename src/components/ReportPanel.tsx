@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Download, X } from 'lucide-react'
 import type { RunState } from '../hooks/useRunEngine'
-import { buildDeliberationReport, exportReportAsPdf, type ReportItem, type ReportSection } from '../lib/report'
+import { buildDeliberationReport, exportReportAsPdf, printReportAsPdf, type ReportItem, type ReportSection } from '../lib/report'
 
 function toneClass(tone?: ReportItem['tone']) {
   if (tone === 'success') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -96,8 +96,19 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
     }
   }
 
-  const handlePrintFallback = () => {
-    window.print()
+  const handlePrint = async () => {
+    if (!reportRef.current || exporting) return
+    setExporting(true)
+    setExportError(null)
+    try {
+      await printReportAsPdf(reportRef.current)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setExportError(message)
+      console.error('打印失败：', error)
+    } finally {
+      setExporting(false)
+    }
   }
 
   return (
@@ -124,10 +135,11 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
               {exporting ? '导出中…' : '导出 PDF'}
             </button>
             <button
-              onClick={handlePrintFallback}
+              onClick={handlePrint}
+              disabled={exporting}
               className="rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
             >
-              打印
+              {exporting ? '生成中…' : '打印'}
             </button>
             <button onClick={onClose} className="rounded-lg border border-neutral-200 p-2 text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-700" aria-label="关闭">
               <X className="h-4 w-4" />
