@@ -15,7 +15,7 @@ function ReportItemView({ item }: { item: ReportItem }) {
     return (
       <ul className="space-y-1">
         {(item.items ?? []).map((entry, index) => (
-          <li key={index} className="flex gap-2 text-[13px] leading-relaxed text-neutral-700">
+          <li key={index} data-report-block="list-item" className="flex gap-2 text-[13px] leading-relaxed text-neutral-700">
             <span className="mt-[8px] h-1 w-1 shrink-0 rounded-full bg-neutral-400" />
             <span>{entry}</span>
           </li>
@@ -25,7 +25,7 @@ function ReportItemView({ item }: { item: ReportItem }) {
   }
   if (item.kind === 'metric') {
     return (
-      <div className="flex items-start justify-between gap-4 border-b border-dashed border-neutral-100 py-1.5">
+      <div data-report-block="metric" className="flex items-start justify-between gap-4 border-b border-dashed border-neutral-100 py-1.5">
         <span className="w-24 shrink-0 text-[12px] font-medium text-neutral-500">{item.label}</span>
         <span className="text-right text-[13px] leading-relaxed text-neutral-800">{item.text}</span>
       </div>
@@ -34,7 +34,7 @@ function ReportItemView({ item }: { item: ReportItem }) {
   if (item.kind === 'score') {
     const percent = Math.max(0, Math.min(100, ((item.score ?? 0) / Math.max(1, item.max ?? 1)) * 100))
     return (
-      <div className="rounded-md border border-neutral-200 px-3 py-2">
+      <div data-report-block="score" className="rounded-md border border-neutral-200 px-3 py-2">
         <div className="flex items-center justify-between">
           <span className="text-[13px] font-medium text-neutral-800">{item.label}</span>
           <span className="font-mono text-[12px] text-neutral-600">{item.score} / {item.max}</span>
@@ -48,14 +48,14 @@ function ReportItemView({ item }: { item: ReportItem }) {
   }
   if (item.kind === 'status') {
     return (
-      <div className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12.5px] font-medium ${toneClass(item.tone)}`}>
+      <div data-report-block="status" className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12.5px] font-medium ${toneClass(item.tone)}`}>
         <span>{item.label}：</span>
         <span>{item.text}</span>
       </div>
     )
   }
   return (
-    <div className="text-[13px] leading-relaxed text-neutral-700">
+    <div data-report-block="text" className="text-[13px] leading-relaxed text-neutral-700">
       {item.label && <span className="mr-1 font-medium text-neutral-900">{item.label}</span>}
       {item.text}
     </div>
@@ -65,11 +65,11 @@ function ReportItemView({ item }: { item: ReportItem }) {
 function ReportSectionView({ section }: { section: ReportSection }) {
   return (
     <section className="mb-6 break-inside-avoid">
-      <div className="mb-2 flex items-center gap-2">
+      <div data-report-block="section-title" className="mb-2 flex items-center gap-2">
         <span className="h-4 w-1 rounded-full bg-neutral-900" />
         <h3 className="text-[15px] font-bold text-neutral-900">{section.title}</h3>
       </div>
-      {section.subtitle && <div className="mb-2 text-[12px] text-neutral-400">{section.subtitle}</div>}
+      {section.subtitle && <div data-report-block="section-subtitle" className="mb-2 text-[12px] text-neutral-400">{section.subtitle}</div>}
       <div className="space-y-2">{section.items.map((item, index) => <ReportItemView key={index} item={item} />)}</div>
     </section>
   )
@@ -141,15 +141,15 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
         )}
         <div ref={reportRef} className="bg-white px-8 py-7">
           <div className="mb-6 border-b border-neutral-100 pb-5">
-            <div className="text-[22px] font-bold leading-tight text-neutral-900">{report.meta.title}</div>
-            <div className="mt-1 text-[13px] text-neutral-500">{report.meta.categoryLabel}</div>
-            <div className="mt-3 rounded-lg bg-neutral-50 px-4 py-3 text-[13px] leading-relaxed text-neutral-700">
+            <div data-report-block="report-title" className="text-[22px] font-bold leading-tight text-neutral-900">{report.meta.title}</div>
+            <div data-report-block="report-category" className="mt-1 text-[13px] text-neutral-500">{report.meta.categoryLabel}</div>
+            <div data-report-block="report-issue" className="mt-3 rounded-lg bg-neutral-50 px-4 py-3 text-[13px] leading-relaxed text-neutral-700">
               <span className="font-medium text-neutral-900">议题：</span>
               {report.meta.issue || '未记录'}
             </div>
           </div>
           {report.sections.map((section) => <ReportSectionView key={section.id} section={section} />)}
-          <div className="mt-4 border-t border-neutral-100 pt-4 text-center text-[11px] text-neutral-400">
+          <div data-report-block="report-footer" className="mt-4 border-t border-neutral-100 pt-4 text-center text-[11px] text-neutral-400">
             本报告由 MA-Collab 多智能体编排框架自动生成 · AI 分析结果仅用于辅助参考
           </div>
         </div>

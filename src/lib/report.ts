@@ -83,15 +83,8 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
     competitive: '多智能体博弈对局',
     unknown: '未分类任务',
   }
-  const titleMap: Record<ReportMeta['category'], string> = {
-    single: '单 Agent 回答报告',
-    collaborative: '多智能体议事报告',
-    competitive: '博弈对局报告',
-    unknown: 'MA-Collab 运行报告',
-  }
-
   const meta: ReportMeta = {
-    title: titleMap[category],
+    title: '议事报告',
     issue: profile?.reasoning ? profile.reasoning : config?.user_input ?? state.blocks.find((block) => block.kind === 'dispatch') ? '见事件流' : '',
     category,
     categoryLabel: categoryLabels[category],
@@ -233,16 +226,20 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
     }
 
     const gameEvents: ReportItem[] = []
+    const seenGameEvents = new Set<string>()
     const votes: string[] = []
     for (const phase of state.blocks) {
       if (phase.kind !== 'phase') continue
       for (const item of phase.phase.items) {
         if (item.kind === 'game_event' && item.data.t === 'game_event') {
           const event = item.data.event
-          if (event.kind === 'GameAction') {
-            gameEvents.push(text(`${event.action_label}：${event.result}`))
-          } else if (event.kind === 'GameSpeech') {
-            gameEvents.push(text(`${event.phase_label} · ${event.audience === 'private' ? '私密发言' : '公开发言'}：${event.content}`))
+          // 博弈报告只保留状态变化动作，不保留逐条发言；相同结果去重。
+          if (event.kind === 'GameAction' && event.action !== 'setup') {
+            const key = `${event.action}:${event.result}`
+            if (!seenGameEvents.has(key)) {
+              seenGameEvents.add(key)
+              gameEvents.push(text(`${event.action_label}：${event.result}`))
+            }
           }
         }
         if (item.kind === 'vote' && item.data.t === 'vote') {
@@ -272,32 +269,47 @@ export async function exportReportAsPdf(element: HTMLElement, filename: string):
   document.body.appendChild(wrapper)
 
   try {
-    const canvas = await html2canvas(wrapper, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: '#ffffff',
-      logging: false,
-      windowWidth: wrapper.scrollWidth,
-      windowHeight: wrapper.scrollHeight,
-    })
-    const imageData = canvas.toDataURL('image/png')
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
     const pageWidth = 210
     const pageHeight = 297
     const margin = 10
     const contentWidth = pageWidth - margin * 2
     const contentHeight = pageHeight - margin * 2
-    const imageHeight = (canvas.height * contentWidth) / canvas.width
+    let blocks = Array.from(wrapper.querySelectorAll<HTMLElement>('[data-report-block]'))
+    if (blocks.length === 0) blocks = [wrapper]
+    let y = margin
 
-    let heightLeft = imageHeight
-    let position = 0
-    pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
-    heightLeft -= contentHeight
-    while (heightLeft > 0) {
-      position -= contentHeight
-      pdf.addPage()
-      pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
-      heightLeft -= contentHeight
+    for (const block of blocks) {
+      const canvas = await html2canvas(block, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+      })
+      const imageData = canvas.toDataURL('image/png')
+      const imageHeight = (canvas.height * contentWidth) / canvas.width
+      if (imageHeight > contentHeight) {
+        // 单个内容块超过一页时按固定高度切片，避免无限高图片。
+        let heightLeft = imageHeight
+        let position = 0
+        pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
+        heightLeft -= contentHeight
+        while (heightLeft > 0) {
+          position -= contentHeight
+          pdf.addPage()
+          pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
+          heightLeft -= contentHeight
+        }
+        y = margin
+        pdf.addPage()
+        continue
+      }
+      if (y + imageHeight > pageHeight - margin) {
+        pdf.addPage()
+        y = margin
+      }
+      pdf.addImage(imageData, 'PNG', margin, y, contentWidth, imageHeight)
+      y += imageHeight + 2
     }
     const safeName = filename.replace(/[\\/:*?"<>|]/g, '-')
     pdf.save(`${safeName}.pdf`)
