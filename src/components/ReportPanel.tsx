@@ -78,18 +78,26 @@ function ReportSectionView({ section }: { section: ReportSection }) {
 export function ReportPanel({ state, onClose }: { state: RunState; onClose: () => void }) {
   const reportRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
   const report = useMemo(() => buildDeliberationReport(state), [state])
 
   const handleExport = async () => {
     if (!reportRef.current || exporting) return
     setExporting(true)
+    setExportError(null)
     try {
       await exportReportAsPdf(reportRef.current, report.meta.title)
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setExportError(message)
       console.error('PDF 导出失败：', error)
     } finally {
       setExporting(false)
     }
+  }
+
+  const handlePrintFallback = () => {
+    window.print()
   }
 
   return (
@@ -115,11 +123,22 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
               <Download className="h-3.5 w-3.5" />
               {exporting ? '导出中…' : '导出 PDF'}
             </button>
+            <button
+              onClick={handlePrintFallback}
+              className="rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
+            >
+              打印
+            </button>
             <button onClick={onClose} className="rounded-lg border border-neutral-200 p-2 text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-700" aria-label="关闭">
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
+        {exportError && (
+          <div className="border-b border-red-100 bg-red-50 px-6 py-2.5 text-[12px] leading-relaxed text-red-600">
+            自动导出失败：{exportError}。可点击「打印」，在浏览器打印对话框中选择“另存为 PDF”。
+          </div>
+        )}
         <div ref={reportRef} className="bg-white px-8 py-7">
           <div className="mb-6 border-b border-neutral-100 pb-5">
             <div className="text-[22px] font-bold leading-tight text-neutral-900">{report.meta.title}</div>

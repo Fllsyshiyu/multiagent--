@@ -259,31 +259,49 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
 }
 
 export async function exportReportAsPdf(element: HTMLElement, filename: string): Promise<void> {
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    useCORS: true,
-    backgroundColor: '#ffffff',
-    logging: false,
-  })
-  const imageData = canvas.toDataURL('image/png')
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const pageWidth = 210
-  const pageHeight = 297
-  const margin = 10
-  const contentWidth = pageWidth - margin * 2
-  const contentHeight = pageHeight - margin * 2
-  const imageHeight = (canvas.height * contentWidth) / canvas.width
+  // 克隆到离屏容器，避免模态框的 fixed 定位与滚动容器干扰 html2canvas 渲染。
+  const wrapper = document.createElement('div')
+  wrapper.style.position = 'fixed'
+  wrapper.style.left = '-10000px'
+  wrapper.style.top = '0'
+  wrapper.style.width = '794px'
+  wrapper.style.backgroundColor = '#ffffff'
+  wrapper.style.padding = '24px'
+  wrapper.style.zIndex = '-1'
+  wrapper.appendChild(element.cloneNode(true))
+  document.body.appendChild(wrapper)
 
-  let heightLeft = imageHeight
-  let position = 0
-  pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
-  heightLeft -= contentHeight
-  while (heightLeft > 0) {
-    position -= contentHeight
-    pdf.addPage()
+  try {
+    const canvas = await html2canvas(wrapper, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      windowWidth: wrapper.scrollWidth,
+      windowHeight: wrapper.scrollHeight,
+    })
+    const imageData = canvas.toDataURL('image/png')
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const pageWidth = 210
+    const pageHeight = 297
+    const margin = 10
+    const contentWidth = pageWidth - margin * 2
+    const contentHeight = pageHeight - margin * 2
+    const imageHeight = (canvas.height * contentWidth) / canvas.width
+
+    let heightLeft = imageHeight
+    let position = 0
     pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
     heightLeft -= contentHeight
+    while (heightLeft > 0) {
+      position -= contentHeight
+      pdf.addPage()
+      pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
+      heightLeft -= contentHeight
+    }
+    const safeName = filename.replace(/[\\/:*?"<>|]/g, '-')
+    pdf.save(`${safeName}.pdf`)
+  } finally {
+    document.body.removeChild(wrapper)
   }
-  const safeName = filename.replace(/[\\/:*?"<>|]/g, '-')
-  pdf.save(`${safeName}.pdf`)
 }
