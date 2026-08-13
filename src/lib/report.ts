@@ -303,8 +303,11 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
       container.style.backgroundColor = '#ffffff'
       container.style.zIndex = '-1'
       container.style.boxSizing = 'border-box'
+      container.style.padding = '4px 0 8px'
+      container.setAttribute('data-export-container', 'true')
       const clone = block.cloneNode(true) as HTMLElement
       clone.style.margin = '0'
+      clone.style.width = '100%'
       container.appendChild(clone)
       document.body.appendChild(container)
 
@@ -315,6 +318,15 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
           useCORS: true,
           backgroundColor: '#ffffff',
           logging: false,
+          onclone: (clonedDocument) => {
+            const exportedContainer = clonedDocument.querySelector('[data-export-container]')
+            exportedContainer?.querySelectorAll('*').forEach((node) => {
+              if (node instanceof HTMLElement) {
+                node.style.lineHeight = '1.5'
+                node.style.wordBreak = 'break-word'
+              }
+            })
+          },
         })
       } finally {
         document.body.removeChild(container)
