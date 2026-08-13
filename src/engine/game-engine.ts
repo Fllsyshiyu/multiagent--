@@ -49,17 +49,24 @@ export function normalizeGameSpec(raw: unknown): GameSpec {
       actions: Array.isArray(role.actions) ? role.actions.map(String) : [],
     }
   })
+  const roleNameToId = new Map(roles.map((role) => [role.name, role.id]))
   const actions = asNonEmptyArray(input.actions, 'actions').map((item) => {
     const action = item as Record<string, unknown>
     const primitive = action.primitive as GamePrimitive
     if (!VALID_PRIMITIVES.includes(primitive)) {
       throw new Error(`GameSpec 动作原语不合法：${String(action.primitive)}`)
     }
+    const rawRole = String(action.role ?? 'all').trim()
+    const role = rawRole === 'all' || rawRole === '__system'
+      ? rawRole
+      : roles.find((candidate) => candidate.id === rawRole)?.id
+        ?? roleNameToId.get(rawRole)
+        ?? 'all'
     return {
       id: String(action.id ?? 'action'),
       name: String(action.name ?? action.id ?? '动作'),
       primitive,
-      role: String(action.role ?? 'all'),
+      role,
       audience: String(action.audience ?? 'public') as GameActionSpec['audience'],
       prompt: String(action.prompt ?? '请执行你的游戏动作。'),
       output_schema: String(action.output_schema ?? '{}'),
@@ -329,20 +336,47 @@ export class GenericGameEngine {
 
   private participantsFor(role: string, state: GameState): GamePlayerState[] {
     if (role === 'all') return state.players.filter((player) => player.alive)
-    return state.players.filter((player) => player.alive && player.role === role)
+    const matched = state.players.filter((player) => player.alive && player.role === role)
+    return matched.length > 0 ? matched : state.players.filter((player) => player.alive)
+  }
+
+  private normalizeActionOutput(data: GameActionOutput): GameActionOutput {
+    if (data.content && data.content.trim()) return data
+    const firstString = Object.values(data).find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    return firstString ? { ...data, content: firstString } : { ...data, content: '' }
   }
 
   private async executeAction(state: GameState, action: GameActionSpec, player: GamePlayerState) {
-    const system = replacePlaceholders(action.prompt, player, state)
-    const { data, tokens } = await callJSON<GameActionOutput>(
-      this.caller,
-      system,
-      `输出 JSON：${action.output_schema}`,
-      (attempt) => this.emit({ t: 'retry', reason: `${action.name} JSON 解析失败`, attempt }),
-    )
-    this.ledger.record(tokens)
-    this.applyPrimitive(action.primitive, state, player, data)
-    this.emitAction(action, state, player, data)
+    try {
+      const system = replacePlaceholders(action.prompt, player, state)
+      const { data, tokens } = await callJSON<GameActionOutput>(
+        this.caller,
+        system,
+        `输出 JSON：${action.output_schema}`,
+        (attempt) => this.emit({ t: 'retry', reason: `${action.name} JSON 解析失败`, attempt }),
+      )
+      this.ledger.record(tokens)
+      const normalized = this.normalizeActionOutput(data)
+      this.applyPrimitive(action.primitive, state, player, normalized)
+      this.emitAction(action, state, player, normalized)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.emit({ t: 'retry', reason: `${player.name} 的「${action.name}」执行失败：${message}`, attempt: 1 })
+      this.emit({
+        t: 'game_event',
+        event: {
+          kind: 'GameAction',
+          phase: state.phase_id,
+          phase_label: state.phase_label,
+          round: state.round,
+          actor: player.id,
+          action: action.id,
+          action_label: action.name,
+          result: `${player.name} 执行「${action.name}」失败：${message}`,
+          visible_to: ['all'],
+        },
+      })
+    }
     await this.paced(220)
   }
 
