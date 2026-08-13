@@ -287,15 +287,6 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
     const margin = 10
     const contentWidth = pageWidth - margin * 2
     const contentHeight = pageHeight - margin * 2
-    const scale = 2
-    // 完整渲染一次，保证所有块在同一个布局宽度下换行，避免逐块渲染造成文字裁剪。
-    const fullCanvas = await html2canvas(wrapper, {
-      scale,
-      useCORS: true,
-      backgroundColor: '#ffffff',
-      logging: false,
-    })
-    const wrapperRect = wrapper.getBoundingClientRect()
     const blocks = Array.from(wrapper.querySelectorAll<HTMLElement>('[data-report-block]'))
     if (blocks.length === 0) blocks.push(wrapper)
 
@@ -303,19 +294,33 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
     let y = margin
 
     for (const block of blocks) {
-      const blockRect = block.getBoundingClientRect()
-      const sx = Math.round((blockRect.left - wrapperRect.left) * scale)
-      const sy = Math.round((blockRect.top - wrapperRect.top) * scale)
-      const sw = Math.max(1, Math.round(blockRect.width * scale))
-      const sh = Math.max(1, Math.round(blockRect.height * scale))
-      const crop = document.createElement('canvas')
-      crop.width = sw
-      crop.height = sh
-      const context = crop.getContext('2d')
-      if (!context) continue
-      context.drawImage(fullCanvas, sx, sy, sw, sh, 0, 0, sw, sh)
-      const imageData = crop.toDataURL('image/png')
-      const imageHeight = (sh * contentWidth) / sw
+      // 每个块放入固定宽度的独立容器渲染，保证文字在相同宽度下换行，不会被父容器或滚动区裁剪。
+      const container = document.createElement('div')
+      container.style.position = 'fixed'
+      container.style.left = '-10000px'
+      container.style.top = '0'
+      container.style.width = '746px'
+      container.style.backgroundColor = '#ffffff'
+      container.style.zIndex = '-1'
+      container.style.boxSizing = 'border-box'
+      const clone = block.cloneNode(true) as HTMLElement
+      clone.style.margin = '0'
+      container.appendChild(clone)
+      document.body.appendChild(container)
+
+      let canvas: HTMLCanvasElement
+      try {
+        canvas = await html2canvas(container, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+        })
+      } finally {
+        document.body.removeChild(container)
+      }
+      const imageData = canvas.toDataURL('image/png')
+      const imageHeight = (canvas.height * contentWidth) / canvas.width
       if (imageHeight > contentHeight) {
         // 单个块异常超长时按固定页高切片，属于极端兜底。
         let heightLeft = imageHeight
