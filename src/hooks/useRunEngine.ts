@@ -11,6 +11,7 @@ import { createLLMCaller } from '../engine/llm'
 import { createScriptedCaller, type ScriptData } from '../engine/scripted'
 import { analyzeInput, runInput, type PreparedRun } from '../engine/runner'
 import type { ForceTrack, ScenarioConfig, TaskProfile } from '../engine/types'
+import type { Attachment } from '../lib/attachments'
 
 export interface PhaseItem {
   kind: 'agent_start' | 'artifact' | 'speech' | 'fishbowl_plan' | 'adaptation' | 'retry' | 'game_event' | 'game_state' | 'vote' | 'exam_frozen' | 'exam_result' | 'final_proposal'
@@ -88,7 +89,7 @@ export function useRunEngine() {
 
   /** 分析阶段：仅运行 Dispatcher + Compiler，编译出 Agent Pool 但不启动引擎 */
   const analyze = useCallback(
-    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack }) => {
+    async (input: string, opts: { llm?: LLMConfig | null; script?: ScriptData | null; forceTrack?: ForceTrack; attachments?: Attachment[] }) => {
       const runId = ++runIdRef.current
       setState({ ...initialState, status: 'running' })
       const caller = opts.llm
@@ -98,7 +99,7 @@ export function useRunEngine() {
         if (runId === runIdRef.current) apply(e)
       }
       try {
-        const result = await analyzeInput(input, caller, guardedApply, opts.forceTrack)
+        const result = await analyzeInput(input, caller, guardedApply, opts.forceTrack, opts.attachments ?? [])
         if (runId === runIdRef.current) {
           setState((prev) => ({
             ...prev,
@@ -120,6 +121,7 @@ export function useRunEngine() {
       agentLLM?: AgentLLMConfig
       script?: ScriptData | null
       forceTrack?: ForceTrack
+      attachments?: Attachment[]
       prepared?: PreparedRun
     }) => {
       const runId = ++runIdRef.current
@@ -142,7 +144,7 @@ export function useRunEngine() {
         if (runId === runIdRef.current) apply(e)
       }
       try {
-        await runInput(input, caller, guardedApply, { forceTrack: opts.forceTrack, prepared: opts.prepared, callerForAgent })
+        await runInput(input, caller, guardedApply, { forceTrack: opts.forceTrack, prepared: opts.prepared, callerForAgent, attachments: opts.attachments ?? [] })
       } catch (err) {
         guardedApply({ t: 'error', message: err instanceof Error ? err.message : String(err) })
       }

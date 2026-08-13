@@ -42,6 +42,7 @@ export async function compileScenario(
   profile: TaskProfile,
   onStep: CompileProgress,
   onRetry?: (attempt: number) => void,
+  evidenceText = '',
 ): Promise<ScenarioConfig> {
   // Step 2 · 查协作决策表（确定性，0 tokens）
   const { combo, hit } = lookupDecisionTable(profile)
@@ -53,8 +54,8 @@ export async function compileScenario(
   // Step 3 · LLM 生成 Agent Pool
   const { data: agentsRaw, tokens: agentTokens } = await callJSON<AgentCard[]>(
     caller,
-    AGENT_SYSTEM,
-    `议题：${userInput}\n场景特征：${profile.domain}，${profile.agent_relations}，决策类型=${profile.decision_pattern}\n\n输出 JSON 数组，格式：\n${AGENT_SCHEMA}`,
+    `${AGENT_SYSTEM}\n用户可能提供附件证据材料。生成的 Agent 必须覆盖证据中提到的利益相关方，并将证据材料作为立场和提案的事实基础。`,
+    `议题：${userInput}\n场景特征：${profile.domain}，${profile.agent_relations}，决策类型=${profile.decision_pattern}${evidenceText ? `\n\n【议事证据材料】\n${evidenceText}` : ''}\n\n输出 JSON 数组，格式：\n${AGENT_SCHEMA}`,
     onRetry,
   )
   const agents = agentsRaw.slice(0, 8).map((a, i) => ({ ...a, id: a.id || `agent_${i}` }))
@@ -100,7 +101,7 @@ export async function compileScenario(
       expected_model_calls: Math.max(12, contracts.length * 5 + 6),
       expected_token_range: [12_000, 90_000],
     },
-    case_context: userInput,
+    case_context: evidenceText ? `${userInput}\n\n【议事证据材料】\n${evidenceText}` : userInput,
     hard_constraints: ['不得违反法律法规', '不得编造证据或数据', '方案必须包含责任主体与资源来源', 'AI 议事结果不替代真实公共决策'],
     exam_blueprint: exam,
   }

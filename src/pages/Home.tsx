@@ -10,6 +10,8 @@ import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
 import { Chip, Spinner } from '../components/common'
 import { ComplexityBlock } from '../components/Complexity'
+import { Paperclip, X } from 'lucide-react'
+import { parseAttachment, type Attachment } from '../lib/attachments'
 
 const LLM_STORAGE_KEY = 'ma_collab_llm_config'
 
@@ -32,8 +34,11 @@ export default function Home() {
   const [showApiPanel, setShowApiPanel] = useState(false)
   const [selectedPreset, setSelectedPreset] = useState<Preset | null>(null)
   const [agentLLMConfig, setAgentLLMConfig] = useState<AgentLLMConfig | undefined>()
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [uploading, setUploading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const reportRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const running = state.status === 'running'
   const started = state.blocks.length > 0 && state.status !== 'idle'
   const hasReport = state.blocks.some((b) => b.kind === 'report')
@@ -51,7 +56,7 @@ export default function Home() {
     if (!finalInput.trim()) return
     const p = preset ?? selectedPreset
     const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
-    analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode })
+    analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode, attachments })
   }
 
   const handleConfirmRun = (selectedAgentLLM?: AgentLLMConfig) => {
@@ -64,6 +69,7 @@ export default function Home() {
       agentLLM: selectedAgentLLM ?? agentLLMConfig,
       script,
       forceTrack: delibMode,
+      attachments,
       prepared: {
         complexity: stagedComplexity?.kind === 'complexity' && stagedComplexity.result
           ? { result: stagedComplexity.result, tokens: 0, source: 'api' }
@@ -79,6 +85,25 @@ export default function Home() {
     setSelectedPreset(p)
     setInput(p.input)
     if (!running) handleAnalyze(p.input, p)
+  }
+
+  const handleUploadFiles = async (files: FileList | File[]) => {
+    if (files.length === 0) return
+    setUploading(true)
+    try {
+      const parsed: Attachment[] = []
+      for (const file of Array.from(files)) {
+        parsed.push(await parseAttachment(file))
+      }
+      setAttachments((prev) => [...prev, ...parsed])
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
   }
 
   const config = extractConfig(state.blocks)
@@ -181,18 +206,59 @@ export default function Home() {
               rows={3}
               className="w-full resize-none rounded-2xl bg-transparent px-5 pt-4 text-[15px] leading-relaxed outline-none placeholder:text-neutral-400"
             />
-            <div className="flex items-center justify-between px-4 pb-3">
-              <span className="text-[12px] text-neutral-400">
-                {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 将播放预录演示'}
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pb-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.doc,.txt,.md,.csv,.json,.html,.xml"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files) void handleUploadFiles(e.target.files) }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  {uploading ? '解析中…' : '上传附件'}
+                </button>
+                <span className="truncate text-[12px] text-neutral-400">
+                  {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 将播放预录演示'}
+                </span>
+              </div>
               <button
                 onClick={() => handleAnalyze()}
                 disabled={!input.trim()}
-                className="rounded-xl bg-neutral-900 px-5 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
+                className="shrink-0 rounded-xl bg-neutral-900 px-5 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
               >
                 开始
               </button>
             </div>
+            {attachments.length > 0 && (
+              <div className="border-t border-neutral-100 px-5 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {attachments.map((attachment) => (
+                    <span
+                      key={attachment.id}
+                      className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] ${attachment.status === 'error' ? 'border-red-200 bg-red-50 text-red-600' : 'border-neutral-200 bg-neutral-50 text-neutral-700'}`}
+                      title={attachment.status === 'error' ? attachment.error : `${attachment.name}（已提取文本，将作为议事证据）`}
+                    >
+                      <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                      <span className="max-w-[220px] truncate">{attachment.name}</span>
+                      <button
+                        onClick={() => removeAttachment(attachment.id)}
+                        className="text-neutral-400 transition-colors hover:text-neutral-700"
+                        aria-label="移除附件"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 分析阶段即可展示复杂度，确认运行后事件流中会再次记录 */}

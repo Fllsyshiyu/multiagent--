@@ -14,6 +14,7 @@ import type { ComplexityClassification, ComplexityResult, ComplexityLevel, Compl
 import { classifyComplexity } from '../complexity'
 import { InvocationAudit } from './framework/audit'
 import { createTerminalReport } from './framework/events'
+import { attachmentContext, type Attachment } from '../lib/attachments'
 
 /** 中文游戏名到 GameSpec key 的输入规范化；只负责路由，不写死游戏规则。 */
 function resolveGameTypeAlias(userInput: string, dispatcherGameType: string): string {
@@ -67,6 +68,7 @@ export async function analyzeInput(
   caller: LLMCaller,
   emit: Emit,
   forceTrack?: ForceTrack,
+  attachments: Attachment[] = [],
 ): Promise<{ profile: TaskProfile; config?: ScenarioConfig }> {
   const ledger = new TokenLedger()
   const invocationAudit = new InvocationAudit()
@@ -99,6 +101,7 @@ export async function analyzeInput(
     auditedCaller, userInput, profile,
     (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
     (n) => emit({ t: 'retry', reason: 'Agent 生成 JSON 解析失败，自动重试', attempt: n }),
+    attachmentContext(attachments),
   )
   emit({ t: 'compile_done', config })
   emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
@@ -116,7 +119,7 @@ export async function runInput(
   userInput: string,
   caller: LLMCaller,
   emit: Emit,
-  options: { forceTrack?: ForceTrack; prepared?: PreparedRun; callerForAgent?: (agentId?: string) => LLMCaller | undefined } = {},
+  options: { forceTrack?: ForceTrack; prepared?: PreparedRun; callerForAgent?: (agentId?: string) => LLMCaller | undefined; attachments?: Attachment[] } = {},
 ): Promise<void> {
   const ledger = new TokenLedger()
   const invocationAudit = new InvocationAudit(options.prepared?.modelInvocations)
@@ -146,9 +149,10 @@ export async function runInput(
       strategy: { A: [], B: 'B1', C: 'C1', D: 'D1', E: [], notes: ['无策略配方：单 Agent 轨道不使用原子策略'] },
     })
     invocationAudit.setContext('direct', '__assistant')
+    const evidenceText = attachmentContext(options.attachments ?? [])
     const { text, tokens: t2 } = await auditedCaller(
-      '你是一个直接、可靠的助手，简明回答用户问题。',
-      userInput,
+      '你是一个直接、可靠的助手，简明回答用户问题。若用户提供附件证据，回答必须明确引用并基于附件内容。',
+      evidenceText ? `${userInput}\n\n【议事证据材料】\n${evidenceText}` : userInput,
     )
     ledger.record(t2)
     emit({ t: 'speech', agent_id: '__assistant', name: 'Assistant', content: text, audience: 'public', tokens: t2 })
@@ -200,6 +204,7 @@ export async function runInput(
     profile,
     (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
     (n) => emit({ t: 'retry', reason: 'Agent 生成 JSON 解析失败，自动重试', attempt: n }),
+    attachmentContext(options.attachments ?? []),
   )
   if (options.prepared?.config) {
     emit({ t: 'compile_step', step: 3, name: '复用已确认配置', detail: '复用分析阶段生成的 Agent Pool、策略与阶段配置，避免重复调用与结果漂移', tokens: 0 })
