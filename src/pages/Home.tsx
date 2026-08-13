@@ -10,6 +10,7 @@ import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
 import { Chip, Spinner } from '../components/common'
 import { ComplexityBlock } from '../components/Complexity'
+import { ReportPanel } from '../components/ReportPanel'
 import { Paperclip, X } from 'lucide-react'
 import { parseAttachment, type Attachment } from '../lib/attachments'
 
@@ -36,6 +37,7 @@ export default function Home() {
   const [agentLLMConfig, setAgentLLMConfig] = useState<AgentLLMConfig | undefined>()
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
+  const [showReportPanel, setShowReportPanel] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const reportRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -130,7 +132,7 @@ export default function Home() {
             </button>
             {hasReport && started && !running && (
               <button
-                onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                onClick={() => setShowReportPanel(true)}
                 className="rounded-lg border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-neutral-700"
               >
                 议事报告
@@ -397,7 +399,7 @@ export default function Home() {
                   </div>
                   {hasReport && (
                     <button
-                      onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                      onClick={() => setShowReportPanel(true)}
                       className="mt-3 mr-3 rounded-lg border border-neutral-600 bg-neutral-800 px-4 py-1.5 text-[12.5px] font-medium text-white hover:bg-neutral-700"
                     >
                       议事报告
@@ -425,6 +427,11 @@ export default function Home() {
           onClear={() => { localStorage.removeItem(LLM_STORAGE_KEY); setLlmConfig(null); setShowApiPanel(false) }}
           onClose={() => setShowApiPanel(false)}
         />
+      )}
+
+      {/* 议事报告导出面板 */}
+      {showReportPanel && (
+        <ReportPanel state={state} onClose={() => setShowReportPanel(false)} />
       )}
     </div>
   )
