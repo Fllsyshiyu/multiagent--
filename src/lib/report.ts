@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf'
 import type { RunState } from '../hooks/useRunEngine'
 import type { Artifact, EngineEvent } from '../engine/types'
 import { STRATEGY_LABELS } from '../engine/dispatcher'
+import cjkFontUrl from '../assets/fonts/NotoSansSC-Regular.ttf'
 
 export type ReportTone = 'default' | 'success' | 'warning' | 'danger'
 
@@ -387,14 +388,151 @@ export function buildFullDeliberationReport(state: RunState): DeliberationReport
   }
 }
 
-export async function exportReportAsPdf(element: HTMLElement, filename: string): Promise<void> {
-  const pdf = await renderReportPdf(element)
+const CJK_FONT_URL = cjkFontUrl
+const CJK_FONT_FILENAME = 'NotoSansSC-Regular.ttf'
+const CJK_FONT_ID = 'NotoSansSC'
+
+let cjkFontBase64: Promise<string | null> | null = null
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x4000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+async function loadCjkFontBase64(): Promise<string | null> {
+  try {
+    const response = await fetch(CJK_FONT_URL, { cache: 'force-cache' })
+    if (!response.ok) return null
+    return arrayBufferToBase64(await response.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+async function registerCjkFont(pdf: jsPDF): Promise<boolean> {
+  cjkFontBase64 ??= loadCjkFontBase64()
+  const base64 = await cjkFontBase64
+  if (!base64) return false
+  try {
+    pdf.addFileToVFS(CJK_FONT_FILENAME, base64)
+    pdf.addFont(CJK_FONT_FILENAME, CJK_FONT_ID, 'normal', 'normal', 'Identity-H')
+    pdf.setFont(CJK_FONT_ID, 'normal')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function reportToneColor(tone: ReportTone): [number, number, number] {
+  if (tone === 'success') return [5, 150, 105]
+  if (tone === 'warning') return [180, 83, 9]
+  if (tone === 'danger') return [185, 28, 28]
+  return [64, 64, 64]
+}
+
+async function renderTextReportPdf(report: DeliberationReport): Promise<jsPDF> {
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  if (!await registerCjkFont(pdf)) throw new Error('无法加载中文字体，切换截图导出')
+
+  const pageWidth = 210
+  const pageHeight = 297
+  const margin = 12
+  const contentWidth = pageWidth - margin * 2
+  const bottom = pageHeight - margin
+  const defaultSize = 9.5
+  const defaultLineHeight = 4.3
+  let y = margin
+
+  const ensureSpace = (required: number): number => {
+    if (y + required > bottom) {
+      pdf.addPage()
+      y = margin
+    }
+    return y
+  }
+
+  const writeLines = (
+    value: string,
+    options: { size?: number; color?: [number, number, number]; lineHeight?: number; indent?: number } = {},
+  ): number => {
+    const size = options.size ?? defaultSize
+    const color = options.color ?? [55, 65, 81] as [number, number, number]
+    const lineHeight = options.lineHeight ?? defaultLineHeight
+    const indent = options.indent ?? 0
+    const lines = pdf.splitTextToSize(value, contentWidth - indent)
+    pdf.setFont(CJK_FONT_ID, 'normal')
+    pdf.setFontSize(size)
+    pdf.setTextColor(color[0], color[1], color[2])
+    for (const line of lines) {
+      y = ensureSpace(lineHeight)
+      pdf.text(line, margin + indent, y)
+      y += lineHeight
+    }
+    return y
+  }
+
+  pdf.setProperties({ title: report.meta.title, author: 'MA-Collab', creator: 'MA-Collab' })
+  writeLines(report.meta.title, { size: 17, color: [17, 24, 39] as [number, number, number], lineHeight: 7 })
+  writeLines(`${report.meta.categoryLabel} · ${report.meta.generatedAt}`, { size: 9, color: [107, 114, 128] as [number, number, number], lineHeight: 4 })
+  y += 2
+  writeLines(`议题：${report.meta.issue || '未记录'}`, { size: 10, color: [55, 65, 81] as [number, number, number] })
+  writeLines(`状态：${report.meta.terminalState} · Agent：${report.meta.agentCount} · LLM：${report.meta.calls} 次 / ${report.meta.tokens.toLocaleString()} tokens`, { size: 8.5, color: [107, 114, 128] as [number, number, number] })
+  y += 3
+
+  for (const section of report.sections) {
+    y = ensureSpace(14)
+    y += 3
+    writeLines(section.title, { size: 12.5, color: [17, 24, 39] as [number, number, number], lineHeight: 5.2 })
+    if (section.subtitle) {
+      writeLines(section.subtitle, { size: 8.5, color: [148, 163, 184] as [number, number, number], lineHeight: 3.8 })
+    }
+    for (const item of section.items) {
+      if (item.kind === 'list') {
+        for (const entry of item.items ?? []) {
+          writeLines(`• ${entry}`, { indent: 3 })
+        }
+        y += 0.7
+        continue
+      }
+      const prefix = item.label ? `${item.label}：` : ''
+      const value = item.kind === 'score'
+        ? `${item.score ?? 0} / ${item.max ?? 0}${item.text ? ` · ${item.text}` : ''}`
+        : item.kind === 'status'
+          ? item.text ?? ''
+          : item.text ?? ''
+      writeLines(`${prefix}${value}`, {
+        color: reportToneColor(item.tone ?? 'default'),
+        lineHeight: item.kind === 'metric' ? 4.1 : defaultLineHeight,
+      })
+      if (item.kind === 'text' || item.kind === 'status' || item.kind === 'score') y += 0.6
+    }
+    y += 2.5
+  }
+
+  const pageCount = pdf.getNumberOfPages()
+  for (let page = 1; page <= pageCount; page++) {
+    pdf.setPage(page)
+    pdf.setFont(CJK_FONT_ID, 'normal')
+    pdf.setFontSize(8)
+    pdf.setTextColor(148, 163, 184)
+    pdf.text(`第 ${page} 页 / 共 ${pageCount} 页`, pageWidth / 2, pageHeight - 6, { align: 'center' })
+  }
+  return pdf
+}
+
+export async function exportReportAsPdf(element: HTMLElement, report: DeliberationReport, filename: string): Promise<void> {
+  const pdf = await renderTextReportPdf(report).catch(() => renderReportPdf(element))
   const safeName = filename.replace(/[\\/:*?"<>|]/g, '-')
   pdf.save(`${safeName}.pdf`)
 }
 
-export async function printReportAsPdf(element: HTMLElement): Promise<void> {
-  const pdf = await renderReportPdf(element)
+export async function printReportAsPdf(element: HTMLElement, report: DeliberationReport): Promise<void> {
+  const pdf = await renderTextReportPdf(report).catch(() => renderReportPdf(element))
   pdf.autoPrint()
   const blobUrl = pdf.output('bloburl') as unknown as string
   window.open(blobUrl, '_blank')
