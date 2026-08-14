@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { PRESETS, type Preset } from '../data/presets'
-import { LLM_PRESETS, type AgentLLMConfig, type LLMProfile, type LLMSettings, type ScenarioConfig } from '../engine/types'
+import { LLM_PRESETS, type AgentLLMConfig, type LLMConfig, type LLMProfile, type LLMSettings, type ScenarioConfig } from '../engine/types'
 import { useRunEngine } from '../hooks/useRunEngine'
 import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
@@ -456,21 +456,46 @@ function AgentConfigPanel({
 }) {
   const [mode, setMode] = useState<'shared' | 'per_agent'>('shared')
   const defaultProfileId = profiles.some((profile) => profile.id === activeProfileId) ? activeProfileId : profiles[0]?.id ?? ''
-  const [perAgentProfileIds, setPerAgentProfileIds] = useState<Record<string, string>>(() =>
-    Object.fromEntries(config.agents.map((agent) => [agent.id, defaultProfileId])),
+  const defaultProfile = profiles.find((profile) => profile.id === defaultProfileId) ?? profiles[0]
+  const defaultAgentConfig: LLMConfig = {
+    base_url: defaultProfile?.base_url ?? LLM_PRESETS[0].base_url,
+    api_key: defaultProfile?.api_key ?? '',
+    model: defaultProfile?.model ?? LLM_PRESETS[0].model,
+  }
+  const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, LLMConfig>>(() =>
+    Object.fromEntries(config.agents.map((agent) => [agent.id, { ...defaultAgentConfig }])),
   )
   const [sharedProfileId, setSharedProfileId] = useState(defaultProfileId)
   const profileForId = (profileId: string) => profiles.find((profile) => profile.id === profileId)
   const hasProfiles = profiles.length > 0
 
+  const updateAgentConfig = (agentId: string, patch: Partial<LLMConfig>) => {
+    setPerAgentConfigs((current) => ({
+      ...current,
+      [agentId]: { ...current[agentId], ...patch },
+    }))
+  }
+
+  const allPerAgentComplete = config.agents.every((agent) => {
+    const candidate = perAgentConfigs[agent.id]
+    return Boolean(candidate?.base_url.trim() && candidate.api_key.trim() && candidate.model.trim())
+  })
+
   const confirm = () => {
     const shared = profileForId(sharedProfileId) ?? profiles[0]
-    if (!shared) return onConfirm(undefined)
-    if (mode === 'shared') return onConfirm({ mode, shared })
-    const perAgent = Object.fromEntries(config.agents.flatMap((agent) => {
-      const selected = profileForId(perAgentProfileIds[agent.id] ?? defaultProfileId)
-      return selected ? [[agent.id, selected]] : []
-    }))
+    if (mode === 'shared') {
+      if (!shared) return onConfirm(undefined)
+      return onConfirm({ mode, shared })
+    }
+    if (!allPerAgentComplete) return
+    const perAgent = Object.fromEntries(config.agents.map((agent) => [
+      agent.id,
+      {
+        base_url: perAgentConfigs[agent.id].base_url.trim(),
+        api_key: perAgentConfigs[agent.id].api_key.trim(),
+        model: perAgentConfigs[agent.id].model.trim(),
+      },
+    ]))
     onConfirm({ mode, shared, per_agent: perAgent })
   }
 
@@ -481,13 +506,11 @@ function AgentConfigPanel({
         <button onClick={onCancel} className="text-[12.5px] text-neutral-400 hover:text-neutral-600">取消</button>
       </div>
       <p className="mt-1 text-[12.5px] text-neutral-500">
-        {hasProfiles
-          ? `Dispatcher 已分析出 ${config.agents.length} 个 Agent 角色。您可选择统一模型或为不同 Agent 分配不同基座模型。`
-          : `Dispatcher 已分析出 ${config.agents.length} 个 Agent 角色。当前使用预设回放，无需选择模型。`}
+        {`Dispatcher 已分析出 ${config.agents.length} 个 Agent 角色。可选择统一模型，或为每个 Agent 分别选择主流模型并填写对应 API Key。`}
       </p>
 
       {/* 模型模式切换 */}
-      {hasProfiles && <div className="mt-4 flex items-center gap-2">
+      {<div className="mt-4 flex items-center gap-2">
         <span className="text-[12px] font-medium text-neutral-600">模型分配：</span>
         <div className="inline-flex rounded-md border border-neutral-200 bg-neutral-50 p-0.5">
           <button
@@ -519,18 +542,48 @@ function AgentConfigPanel({
               </div>
             </div>
             {mode === 'per_agent' && (
-              <div className="mt-2">
-                <select
-                  value={perAgentProfileIds[a.id] ?? defaultProfileId}
-                  onChange={(e) => setPerAgentProfileIds((prev) => ({ ...prev, [a.id]: e.target.value }))}
-                  className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[12px] text-neutral-800 outline-none focus:border-neutral-900"
-                >
-                  {profiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name} · {profile.model}
-                    </option>
+              <div className="mt-2 space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {LLM_PRESETS.map((preset) => (
+                    <button
+                      key={preset.name}
+                      onClick={() => updateAgentConfig(a.id, {
+                        base_url: preset.base_url,
+                        model: preset.model,
+                        api_key: perAgentConfigs[a.id]?.base_url === preset.base_url ? perAgentConfigs[a.id].api_key : '',
+                      })}
+                      className={`rounded-md border px-2 py-1 text-[10.5px] font-medium transition-colors ${
+                        perAgentConfigs[a.id]?.base_url === preset.base_url
+                          ? 'border-neutral-900 bg-neutral-900 text-white'
+                          : 'border-neutral-200 bg-white text-neutral-600 hover:border-neutral-900'
+                      }`}
+                    >
+                      {preset.name}
+                    </button>
                   ))}
-                </select>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5">
+                  <label className="text-[10.5px] font-medium text-neutral-500">Base URL</label>
+                  <input
+                    value={perAgentConfigs[a.id]?.base_url ?? ''}
+                    onChange={(e) => updateAgentConfig(a.id, { base_url: e.target.value })}
+                    className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-[11px] text-neutral-800 outline-none focus:border-neutral-900"
+                  />
+                  <label className="text-[10.5px] font-medium text-neutral-500">API Key</label>
+                  <input
+                    value={perAgentConfigs[a.id]?.api_key ?? ''}
+                    onChange={(e) => updateAgentConfig(a.id, { api_key: e.target.value })}
+                    type="password"
+                    placeholder="sk-…"
+                    className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-[11px] text-neutral-800 outline-none focus:border-neutral-900"
+                  />
+                  <label className="text-[10.5px] font-medium text-neutral-500">模型名</label>
+                  <input
+                    value={perAgentConfigs[a.id]?.model ?? ''}
+                    onChange={(e) => updateAgentConfig(a.id, { model: e.target.value })}
+                    className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-[11px] text-neutral-800 outline-none focus:border-neutral-900"
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -556,14 +609,15 @@ function AgentConfigPanel({
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <span className="text-[11px] text-neutral-400">
-          {!hasProfiles
-            ? '所有 Agent 使用预设回放应答'
-            : mode === 'shared'
-              ? '所有 Agent 使用统一配置'
-              : `${Object.keys(perAgentProfileIds).length} 个 Agent 可分别使用独立端点与 Key`}
+          {mode === 'shared'
+            ? hasProfiles ? '所有 Agent 使用统一配置' : '请先在上方 API 配置中添加统一模型'
+            : allPerAgentComplete
+              ? `${config.agents.length} 个 Agent 已分别配置独立模型与 Key`
+              : '请为每个 Agent 填写 API Key 和模型名'}
         </span>
         <button
           onClick={confirm}
+          disabled={(mode === 'shared' && !hasProfiles) || (mode === 'per_agent' && !allPerAgentComplete)}
           className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-200"
         >
           确认并启动议事

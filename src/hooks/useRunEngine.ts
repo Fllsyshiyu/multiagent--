@@ -138,8 +138,8 @@ export function useRunEngine() {
         }
       }
       const sharedCaller = opts.agentLLM?.shared ? createLLMCaller(opts.agentLLM.shared) : undefined
-      const callerForAgent = opts.llm
-        ? (agentId?: string) => (agentId ? perAgentCallers.get(agentId) : undefined) ?? sharedCaller
+      const callerForAgent = opts.agentLLM
+        ? (agentId?: string) => agentId ? perAgentCallers.get(agentId) ?? sharedCaller : sharedCaller
         : undefined
       const guardedApply = (e: EngineEvent) => {
         if (runId === runIdRef.current) apply(e)
