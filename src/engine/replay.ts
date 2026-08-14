@@ -4,8 +4,10 @@ import { parseGameRequest } from './game-request'
 import { createScriptedCaller, type ScriptData } from './scripted'
 
 interface ReplayGameContext {
+  game_type: string
   action_id: string
   primitive: string
+  round: number
   player: { id: string; name: string; role: string; role_label: string; team: string; private_info: string }
   alive_players: { id: string; name: string }[]
   valid_targets: { id: string; name: string }[]
@@ -74,6 +76,36 @@ function nextTarget(context: ReplayGameContext): string {
   return context.valid_targets[ownNumber % context.valid_targets.length].id
 }
 
+const UNDERCOVER_CLUES: Record<'civilian' | 'spy', string[]> = {
+  civilian: [
+    '它常见的颜色不止一种，口感有甜也有微酸。',
+    '一只手就能拿住，切开后里面的籽排列得很规整。',
+    '它经常出现在午餐盒里，也常被做成派。',
+    '表皮通常比较光滑，放久后口感会逐渐变软。',
+    '很多故事和品牌都会借用它的形象。',
+  ],
+  spy: [
+    '它成熟时汁水很多，外形通常不是正圆的。',
+    '果肉清甜，靠近果核的位置口感会更明显。',
+    '它也有不同颜色，顶部常能看到一小段果柄。',
+  ],
+}
+
+function undercoverSpeech(context: ReplayGameContext): string {
+  const role = context.player.role === 'spy' ? 'spy' : 'civilian'
+  const playerNumber = Number(context.player.id.replace(/\D/g, '')) || 1
+  const clues = UNDERCOVER_CLUES[role]
+  return clues[(playerNumber + context.round - 2) % clues.length]
+}
+
+function undercoverSuspect(context: ReplayGameContext): string {
+  const suspiciousLine = context.public_log.find((line) => /不是正圆|靠近果核/.test(line))
+  const suspect = suspiciousLine
+    ? context.alive_players.find((player) => suspiciousLine.startsWith(`${player.name}：`))
+    : undefined
+  return suspect?.id ?? nextTarget(context)
+}
+
 function gameResponse(context: ReplayGameContext): Record<string, unknown> {
   switch (context.primitive) {
     case 'private_chat':
@@ -84,9 +116,18 @@ function gameResponse(context: ReplayGameContext): Record<string, unknown> {
     case 'decide_life':
       return { use_antidote: context.quest_number === 1, poison_target: null, reason: '首轮优先保留更多公开信息' }
     case 'public_speech':
+      if (context.game_type === 'undercover') {
+        return { content: undercoverSpeech(context), suspect: null }
+      }
       return { content: `我是${context.player.name}。目前信息有限，我会结合前序发言、组队记录和投票变化继续判断。`, suspect: context.valid_targets[0]?.id ?? null }
-    case 'vote':
+    case 'vote': {
+      if (context.game_type === 'undercover') {
+        if (context.round === 1) return { target: nextTarget(context), reason: '首轮线索不足，先保留判断' }
+        const target = context.player.role === 'spy' ? nextTarget(context) : undercoverSuspect(context)
+        return { target, reason: context.player.role === 'spy' ? '尝试把怀疑引向描述较模糊的人' : '其关于形状和果核的描述与多数线索不一致' }
+      }
       return { target: nextTarget(context), reason: '其当前行为与公开信息最不一致' }
+    }
     case 'propose_team': {
       const required = context.required_team_size ?? Math.min(2, context.alive_players.length)
       const ownIndex = Math.max(0, context.alive_players.findIndex((player) => player.id === context.player.id))

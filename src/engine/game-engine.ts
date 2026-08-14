@@ -471,6 +471,7 @@ export class GenericGameEngine {
       ? (opponents.length ? opponents : nonSelf)
       : nonSelf
     return {
+      game_type: spec.game_type,
       action_id: action.id,
       primitive: action.primitive,
       phase: state.phase_label,

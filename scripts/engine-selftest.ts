@@ -15,7 +15,7 @@ import { OrchestrationEngine } from '../src/engine/engine'
 import { createScriptedCaller } from '../src/engine/scripted'
 import { elevatorScript } from '../src/data/scripts/elevator'
 import { GenericGameEngine, buildRoleList, normalizeGameSpec } from '../src/engine/game-engine'
-import { AVALON_SPEC, CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, WEREWOLF_SPEC } from '../src/engine/game-specs'
+import { AVALON_SPEC, CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, UNDERCOVER_SPEC, WEREWOLF_SPEC } from '../src/engine/game-specs'
 import { parseGameRequest } from '../src/engine/game-request'
 import { createReplayCaller, offlineProfile } from '../src/engine/replay'
 
@@ -247,6 +247,19 @@ export async function run() {
   assert.ok(avalonResult?.t === 'game_result' && ['good', 'evil'].includes(avalonResult.result.winner_team))
   assert.ok(avalonEvents.some((event) => event.t === 'game_event' && event.event.kind === 'GameAction' && event.event.action === 'resolve_quest'))
   assert.ok(avalonEvents.some((event) => event.t === 'game_state' && event.roster?.length === 8))
+
+  const undercoverEvents: import('../src/engine/types').EngineEvent[] = []
+  await new GenericGameEngine(createReplayCaller('6个人玩谁是卧底'), (event) => undercoverEvents.push(event), { fast: true })
+    .run(UNDERCOVER_SPEC, '6个人玩谁是卧底', { playerCount: 6 })
+  const undercoverSpeeches = undercoverEvents
+    .filter((event) => event.t === 'game_event' && event.event.kind === 'GameSpeech')
+    .map((event) => event.t === 'game_event' && event.event.kind === 'GameSpeech' ? event.event.content : '')
+  const undercoverResult = undercoverEvents.find((event) => event.t === 'game_result')
+  assert.ok(undercoverSpeeches.length >= 6)
+  assert.ok(new Set(undercoverSpeeches).size > 3)
+  assert.ok(undercoverSpeeches.every((speech) => !speech.includes('目前信息有限')))
+  assert.equal(undercoverResult?.t === 'game_result' ? undercoverResult.result.winner_team : undefined, 'civilian')
+  assert.ok(undercoverEvents.some((event) => event.t === 'vote' && event.result.includes('玩家1') && event.result.includes('出局')))
 
   const caller = createScriptedCaller(elevatorScript)
   const compiled = await compileScenario(caller, '电梯议事端到端自测', elevatorScript.dispatch, () => {})
