@@ -31,10 +31,8 @@ function normalizeProfile(value: unknown, index: number): LLMProfile | null {
   }
 }
 
-/** 读取 v2 配置库，并兼容迁移旧版“单一 API 配置”结构。 */
-export function loadLLMSettings(storage: Pick<Storage, 'getItem'> = localStorage): LLMSettings {
+function parseSettings(raw: string | null): LLMSettings {
   try {
-    const raw = storage.getItem(LLM_STORAGE_KEY)
     if (!raw) return EMPTY_LLM_SETTINGS
     const parsed = JSON.parse(raw) as unknown
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Partial<LLMSettings>).profiles)) {
@@ -55,8 +53,34 @@ export function loadLLMSettings(storage: Pick<Storage, 'getItem'> = localStorage
   return EMPTY_LLM_SETTINGS
 }
 
-export function saveLLMSettings(settings: LLMSettings, storage: Pick<Storage, 'setItem'> = localStorage): void {
-  storage.setItem(LLM_STORAGE_KEY, JSON.stringify(settings))
+/**
+ * API Key 默认只保存在当前标签页会话。首次读取旧版 localStorage 配置时会迁移并删除旧副本，
+ * 既保持升级后的当前会话可用，也避免公开页面长期明文保存密钥。
+ */
+export function loadLLMSettings(storage?: Pick<Storage, 'getItem'>): LLMSettings {
+  if (storage) return parseSettings(storage.getItem(LLM_STORAGE_KEY))
+  const session = typeof sessionStorage === 'undefined' ? null : sessionStorage
+  const local = typeof localStorage === 'undefined' ? null : localStorage
+  const sessionSettings = parseSettings(session?.getItem(LLM_STORAGE_KEY) ?? null)
+  if (sessionSettings.profiles.length) return sessionSettings
+  const legacyRaw = local?.getItem(LLM_STORAGE_KEY) ?? null
+  const legacySettings = parseSettings(legacyRaw)
+  if (legacySettings.profiles.length && legacyRaw) {
+    session?.setItem(LLM_STORAGE_KEY, legacyRaw)
+    local?.removeItem(LLM_STORAGE_KEY)
+  }
+  return legacySettings
+}
+
+export function saveLLMSettings(settings: LLMSettings, storage?: Pick<Storage, 'setItem'>): void {
+  const target = storage ?? (typeof sessionStorage === 'undefined' ? null : sessionStorage)
+  target?.setItem(LLM_STORAGE_KEY, JSON.stringify(settings))
+  if (!storage && typeof localStorage !== 'undefined') localStorage.removeItem(LLM_STORAGE_KEY)
+}
+
+export function clearLLMSettings(): void {
+  if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(LLM_STORAGE_KEY)
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(LLM_STORAGE_KEY)
 }
 
 export function activeLLMProfile(settings: LLMSettings): LLMProfile | null {

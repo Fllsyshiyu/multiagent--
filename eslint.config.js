@@ -20,4 +20,11 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['src/components/ui/**/*.{ts,tsx}', 'src/components/RunBlocks.tsx'],
+    rules: {
+      // shadcn 组件会与 variants/辅助函数共置；这些导出不是运行时状态。
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

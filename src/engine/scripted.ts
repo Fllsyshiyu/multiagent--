@@ -54,8 +54,10 @@ export function createScriptedCaller(script: ScriptData): LLMCaller {
   return async (system: string, user: string): Promise<{ text: string; tokens: number }> => {
     const nameMatch = system.match(/「(.+?)」/)
     const name = nameMatch?.[1] ?? ''
-    const idInSystem = system.match(/「.+?」（(p\d)）/)?.[1]
-    const agentId = script.agents?.find((a) => a.name === name)?.id ?? idInSystem ?? ''
+    const idInSystem = system.match(/「.+?」（(p\d+)）/)?.[1]
+    const idInContext = system.match(/"player":\{"id":"(p\d+)"/)?.[1]
+    const actionId = system.match(/"action_id":"([^"]+)"/)?.[1]
+    const agentId = script.agents?.find((a) => a.name === name)?.id ?? idInSystem ?? idInContext ?? ''
 
     // Query Complexity rubric
     if (system.includes('Query Complexity 评估器')) {
@@ -131,6 +133,12 @@ export function createScriptedCaller(script: ScriptData): LLMCaller {
     // ---- 狼人杀 ----
     const ww = script.werewolf
     if (ww) {
+      if (actionId === 'wolf_talk') return json(ww.wolf_talk[agentId] ?? { content: '先观察发言再统一目标。', suggest_target: 'p3' }, 320)
+      if (actionId === 'wolf_kill') return json({ target: Object.values(ww.wolf_talk).at(-1)?.suggest_target ?? 'p3' }, 260)
+      if (actionId === 'seer_check') return json(ww.seer_check, 300)
+      if (actionId === 'witch_decide') return json(ww.witch, 300)
+      if (actionId === 'day_speech') return json(ww.day_speech[agentId] ?? { content: '信息不足，先听取其他玩家发言。', suspect: null }, 360)
+      if (actionId === 'day_vote') return json(ww.vote[agentId] ?? { target: agentId === 'p1' ? 'p2' : 'p1', reason: '当前发言最可疑' }, 300)
       // 先匹配 user 特征分支（白天发言/投票），避免被身份关键词劫持
       if (user.includes('白天发言')) {
         const s = ww.day_speech[agentId]

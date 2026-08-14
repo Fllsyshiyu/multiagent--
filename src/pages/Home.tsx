@@ -12,10 +12,17 @@ import { Chip, Spinner } from '../components/common'
 import { ComplexityBlock } from '../components/Complexity'
 import { ReportPanel } from '../components/ReportPanel'
 import { Paperclip, X } from 'lucide-react'
-import { parseAttachment, type Attachment } from '../lib/attachments'
+import { MAX_ATTACHMENT_COUNT, parseAttachment, type Attachment } from '../lib/attachments'
 import {
-  activeLLMProfile, createLLMProfileId, EMPTY_LLM_SETTINGS, LLM_STORAGE_KEY, loadLLMSettings, saveLLMSettings,
+  activeLLMProfile, clearLLMSettings, createLLMProfileId, EMPTY_LLM_SETTINGS, loadLLMSettings, saveLLMSettings,
 } from '../lib/llm-settings'
+
+function resolveReplayScript(input: string, preset: Preset | null, hasLiveConfig: boolean) {
+  if (hasLiveConfig) return null
+  const normalized = input.trim()
+  if (preset && normalized === preset.input.trim()) return preset.script
+  return PRESETS.find((candidate) => normalized === candidate.input.trim())?.script ?? null
+}
 
 export default function Home() {
   const { state, start, reset, analyze, clearStaged, delibMode, setDelibMode } = useRunEngine()
@@ -47,7 +54,7 @@ export default function Home() {
     const finalInput = text ?? input
     if (!finalInput.trim()) return
     const p = preset ?? selectedPreset
-    const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
+    const script = resolveReplayScript(finalInput, p, Boolean(llmConfig))
     analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode, attachments })
   }
 
@@ -55,7 +62,7 @@ export default function Home() {
     const finalInput = input.trim()
     if (!finalInput) return
     const p = selectedPreset
-    const script = !llmConfig ? (p?.script ?? PRESETS.find((x) => finalInput.includes(x.input.slice(0, 6)))?.script ?? PRESETS[0].script) : null
+    const script = resolveReplayScript(finalInput, p, Boolean(llmConfig))
     start(finalInput, {
       llm: llmConfig,
       agentLLM: selectedAgentLLM ?? agentLLMConfig,
@@ -81,10 +88,12 @@ export default function Home() {
 
   const handleUploadFiles = async (files: FileList | File[]) => {
     if (files.length === 0) return
+    const remainingSlots = Math.max(0, MAX_ATTACHMENT_COUNT - attachments.length)
+    if (remainingSlots === 0) return
     setUploading(true)
     try {
       const parsed: Attachment[] = []
-      for (const file of Array.from(files)) {
+      for (const file of Array.from(files).slice(0, remainingSlots)) {
         parsed.push(await parseAttachment(file))
       }
       setAttachments((prev) => [...prev, ...parsed])
@@ -192,7 +201,10 @@ export default function Home() {
           <div className="mt-10 rounded-2xl border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
             <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                if (selectedPreset && e.target.value.trim() !== selectedPreset.input.trim()) setSelectedPreset(null)
+              }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAnalyze() } }}
               placeholder="例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…"
               rows={3}
@@ -214,10 +226,10 @@ export default function Home() {
                   className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Paperclip className="h-3.5 w-3.5" />
-                  {uploading ? '解析中…' : '上传附件'}
+                  {uploading ? '解析中…' : `上传附件（最多 ${MAX_ATTACHMENT_COUNT} 个）`}
                 </button>
                 <span className="truncate text-[12px] text-neutral-400">
-                  {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 将播放预录演示'}
+                  {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 预设回放 / 内置博弈离线运行'}
                 </span>
               </div>
               <button
@@ -292,7 +304,7 @@ export default function Home() {
           {showCompetitiveConfirm && (
             <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5 text-center">
               <p className="text-[13px] text-neutral-700">
-                分析完成：此任务判定为<strong>博弈轨道</strong>，确认后将加载对应 Game Extension。
+                分析完成：识别为 <strong>{state.stagedProfile?.agent_count} 人 · {state.stagedProfile?.game_type}</strong>，确认后加载对应 GameSpec。
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
                 <button onClick={() => clearStaged()} className="rounded-lg border border-neutral-200 px-4 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:bg-neutral-100">取消</button>
@@ -350,7 +362,7 @@ export default function Home() {
           </div>
 
           <footer className="mt-14 text-center text-[11.5px] leading-relaxed text-neutral-400">
-            Live 模式下 API Key 仅保存在你的浏览器（localStorage），只发往你选择的 LLM 服务商，不经过任何其他服务器。
+            Live 模式下 API Key 仅保存在当前浏览器标签会话，只发往你选择的 LLM 服务商，不经过本项目服务器。
             <br />AI 议事结果仅用于辅助分析，不替代真实公共决策与实地调研。
           </footer>
         </main>
@@ -415,7 +427,7 @@ export default function Home() {
         <ApiPanel
           settings={llmSettings}
           onSave={(settings) => { saveLLMSettings(settings); setLlmSettings(settings); setShowApiPanel(false) }}
-          onClear={() => { localStorage.removeItem(LLM_STORAGE_KEY); setLlmSettings(EMPTY_LLM_SETTINGS); setShowApiPanel(false) }}
+          onClear={() => { clearLLMSettings(); setLlmSettings(EMPTY_LLM_SETTINGS); setShowApiPanel(false) }}
           onClose={() => setShowApiPanel(false)}
         />
       )}
@@ -665,7 +677,7 @@ function ApiPanel({ settings, onSave, onClear, onClose }: { settings: LLMSetting
           </div>
         </div>
         <p className="mt-3 rounded-lg bg-neutral-50 px-3 py-2 text-[11.5px] leading-relaxed text-neutral-500">
-          共 {profiles.length} 套独立配置。Key 仅保存在本机 localStorage，并只会发送到该配置对应的 Base URL。
+          共 {profiles.length} 套独立配置。Key 仅保存在当前标签页会话，关闭标签页后需要重新填写，并且只会发送到该配置对应的 Base URL。
           浏览器直连要求服务商允许跨域调用。DeepSeek、Moonshot 通常支持。
           注意 Moonshot 国内站（platform.moonshot.cn）与国际站（platform.moonshot.ai）的 API Key 不通用，
           需与 Base URL 一一对应，否则返回 401。

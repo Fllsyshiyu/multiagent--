@@ -9,6 +9,10 @@ function resolveRoster(roster?: GameRosterEntry[]) {
   return roster ?? []
 }
 
+function isAdversarialTeam(team?: string) {
+  return ['wolf', 'evil', 'killer', 'spy', 'red', 'fraud'].includes(team ?? '')
+}
+
 export function GameRoster({ dead = [], roster }: { dead?: string[]; roster?: GameRosterEntry[] }) {
   const players = resolveRoster(roster)
   if (players.length === 0) return null
@@ -22,7 +26,7 @@ export function GameRoster({ dead = [], roster }: { dead?: string[]; roster?: Ga
       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {players.map((player) => {
           const isDead = dead.includes(player.id)
-          const highlighted = player.team !== 'good' && player.team !== 'civilian'
+          const highlighted = isAdversarialTeam(player.team)
           return (
             <div key={player.id} className={`rounded-lg border p-2.5 text-center transition-all ${isDead ? 'border-neutral-200 bg-neutral-100 opacity-40' : highlighted ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white'}`}>
               <div className={`text-[14px] font-bold ${isDead ? 'line-through' : ''}`}>{player.name}</div>
@@ -45,7 +49,7 @@ export function GameSpeechBubble({ speech, roster }: { speech: GameSpeechEvent; 
   const isPrivate = speech.audience === 'private'
   return (
     <div className={`flex gap-2.5 ${isPrivate ? 'opacity-95' : ''}`}>
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${player?.team && player.team !== 'good' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'}`}>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${isAdversarialTeam(player?.team) ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'}`}>
         {player?.name.slice(0, 1) ?? '?'}
       </span>
       <div className={`max-w-[85%] rounded-lg px-3.5 py-2.5 ${isPrivate ? 'border border-dashed border-neutral-900 bg-neutral-900 text-white' : 'border border-neutral-200 bg-white'}`}>

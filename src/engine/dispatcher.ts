@@ -7,6 +7,7 @@ import type { PhasePolicy, TaskProfile, StrategyCombo } from './types'
 import { callJSON, type LLMCaller } from './llm'
 import { policyToLegacyCombo, STRATEGY_LABELS as FINAL_STRATEGY_LABELS } from './framework/registry'
 import { validatePolicy } from './framework/validation'
+import { parseGameRequest } from './game-request'
 
 import type { ForceTrack } from './types'
 
@@ -51,6 +52,14 @@ export async function dispatch(
     `用户输入：${userInput}\n\n输出 JSON，格式：\n${DISPATCH_SCHEMA}`,
     onRetry,
   )
+  const explicitGame = parseGameRequest(userInput)
+  if (explicitGame.gameType) {
+    data.task_type = 'competitive'
+    data.game_type = explicitGame.gameType
+    if (explicitGame.playerCount) data.agent_count = explicitGame.playerCount
+    data.domain = 'game'
+    data.reasoning = `【输入显式指定】game_type=${explicitGame.gameType}${explicitGame.playerCount ? `，player_count=${explicitGame.playerCount}` : ''}；${data.reasoning}`
+  }
   // ForceTrack 覆盖（用户手动选择议事模式）
   if (forceTrack === 'single') {
     data.agent_count = 1

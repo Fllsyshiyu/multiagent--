@@ -21,6 +21,13 @@ export type GamePrimitive =
   | 'resolve_night'
   | 'resolve_vote'
   | 'judge_winner'
+  | 'propose_team'
+  | 'approve_team'
+  | 'resolve_team_vote'
+  | 'quest_vote'
+  | 'resolve_quest'
+  | 'assassinate'
+  | 'resolve_assassination'
 
 export type GameActionAudience = 'self' | 'team' | 'public' | 'god'
 
@@ -42,6 +49,9 @@ export interface GameActionOutput {
   poison_target?: string | null
   suspect?: string | null
   reason?: string
+  team?: string[]
+  approve?: boolean
+  quest_success?: boolean
   [key: string]: unknown
 }
 
@@ -53,6 +63,7 @@ export interface GamePlayerState {
   team: string
   alive: boolean
   private_info: string
+  resources?: Record<string, number>
 }
 
 export interface GameState {
@@ -71,6 +82,16 @@ export interface GameState {
   winner_label?: string | null
   result_reason?: 'condition' | 'tiebreak' | null
   votes?: { agent_id: string; vote: string; reason: string }[]
+  leader_index?: number
+  proposed_team?: string[]
+  team_votes?: { agent_id: string; approve: boolean; reason: string }[]
+  team_approved?: boolean
+  quest_votes?: { agent_id: string; success: boolean }[]
+  quest_number?: number
+  quest_successes?: number
+  quest_failures?: number
+  rejected_teams?: number
+  awaiting_assassination?: boolean
 }
 
 export interface GameTeamSpec {
@@ -85,12 +106,35 @@ export interface GameRoleSpec {
   team: string
   description: string
   actions: string[]
+  knowledge?: {
+    teams?: string[]
+    roles?: string[]
+    except_roles?: string[]
+    label?: string
+  }
 }
 
 export interface GameCompositionSpec {
   fixed: { role: string; count: number }[]
   ratio: { role: string; denominator: number; min?: number; max?: number }[]
   fill_role: string
+  /** 对角色配置严格依赖人数的游戏（如阿瓦隆）使用精确表。 */
+  by_player_count?: Record<string, string[]>
+}
+
+export interface QuestRulesSpec {
+  team_sizes_by_player_count: Record<string, number[]>
+  fail_threshold_by_round?: Record<string, number>
+  fail_threshold_by_player_count?: Record<string, Record<string, number>>
+  successes_to_win: number
+  failures_to_win: number
+  max_rejected_teams: number
+  assassin_role?: string
+  protected_role?: string
+  good_team: string
+  evil_team: string
+  good_win_label: string
+  evil_win_label: string
 }
 
 export interface GamePhaseSpec {
@@ -147,4 +191,5 @@ export interface GameSpec {
   /** 保证对局不会以含糊的“未分胜负”结束。 */
   tiebreak?: GameTiebreakSpec
   game_loop?: GameLoopSpec
+  quest_rules?: QuestRulesSpec
 }

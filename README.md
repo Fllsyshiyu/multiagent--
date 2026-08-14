@@ -23,8 +23,8 @@ Dispatcher（一次 LLM 调用，~300 tokens）
     │           → 鱼缸两轮（按冲突数据选内圈 + 摘要继承 + ≥2 席轮换）
     │           → 修订方案 → 试卷阅卷（红线门 + 客观 40 + 主观 60）→ 报告
     └── task_type = competitive → GameRegistry / 动态 GameSpec
-            复用私聊、权限信息、侦查、公开发言、投票淘汰与终局判定
-            狼人杀只是预设之一；同一机制可运行谁是卧底、杀人游戏、网络攻防、反舞弊调查等
+            复用私聊、权限信息、侦查、公开发言、投票、组队、任务与终局判定
+            狼人杀只是预设之一；同一机制可运行阿瓦隆、谁是卧底、杀人游戏、网络攻防、反舞弊调查等
 ```
 
 ## 五级 Query 复杂度
@@ -55,14 +55,16 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 - **角色与阵营**：任意数量的隐藏/公开角色，以及胜负所属阵营；
 - **信息权限**：本人、阵营、公开和上帝视角四级可见性；
 - **阶段循环**：秘密行动、侦查/防护、公开发言、投票淘汰；
+- **人数与角色**：从“12 人 / 十二位玩家”等自由文本中解析人数，狼人杀动态配比，阿瓦隆按 5–10 人精确角色表装配；
+- **任务型博弈**：支持队长提名、全员组队表决、秘密任务票、连续否决和刺客终局；
 - **胜负条件**：角色清除、阵营清除、人数压制、最后阵营；
 - **强制终局**：最大回合后按存活人数、阵营优先级或明确平局判定，不再以“未分胜负”结束；
-- **应用预设**：狼人杀、谁是卧底、杀人游戏、网络安全红蓝对抗、企业反舞弊调查；未知对抗场景可由模型编译为同一 GameSpec。
+- **应用预设**：狼人杀、阿瓦隆、谁是卧底、杀人游戏、网络安全红蓝对抗、企业反舞弊调查；未知对抗场景可由模型编译为同一 GameSpec。
 
 ## 双模式运行
 
-- **Live 模式**：在界面填入 OpenAI 兼容端点（Base URL + API Key + 模型），浏览器直连服务商，Dispatcher 分类、Agent 生成、每场发言、阅卷评分全部实时生成。Key 仅存于浏览器 localStorage，只发往用户自选服务商。
-- **回放模式**：无 Key 时播放四个预录剧本（写通知 / 电梯加装 / 广场舞 / 狼人杀）。回放也是真实引擎在执行，只是 LLM 应答换成剧本——共用同一条数据契约。
+- **Live 模式**：在界面填入 OpenAI 兼容端点（Base URL + API Key + 模型），浏览器直连服务商，Dispatcher 分类、Agent 生成、每场发言、阅卷评分全部实时生成。Key 仅存于当前标签页的 `sessionStorage`，只发往用户自选服务商；旧版 `localStorage` 配置会自动迁移并清除旧副本。
+- **回放模式**：无 Key 时，四个预设继续使用原有冻结剧本；自由输入的内置博弈则根据游戏类型、人数与当前阶段生成确定性离线应答，不再回退到固定的 6 人狼人杀剧本。
 
 ## 健壮性设计
 
@@ -80,12 +82,14 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 ```bash
 npm install
 npm run dev
+npm run test:engine
+npm run lint
 npm run build
 ```
 
 ## 部署（GitHub Pages）
 
-仓库内置 `.github/workflows/deploy.yml`：推送到 `main` 分支后自动构建并发布到 GitHub Pages。
+仓库内置 `.github/workflows/deploy.yml`：推送到 `main` 分支后使用 Node 22 自动执行引擎测试、Lint、生产构建并发布到 GitHub Pages。
 首次使用需在仓库 Settings → Pages → Source 选择 **GitHub Actions**。
 
 ## 工程结构
@@ -98,10 +102,14 @@ src/
 │   ├── dispatcher.ts  #   一句话分类 + 30 格决策表 + 组合规则校验
 │   ├── compiler.ts    #   Scenario Compiler 六步
 │   ├── engine.ts      #   编排引擎主循环（Open-first Fishbowl）
-│   ├── werewolf.ts    #   狼人杀博弈扩展
+│   ├── game-types.ts  #   通用博弈数据契约与原子动作
+│   ├── game-specs.ts  #   内置 GameSpec（狼人杀、阿瓦隆等）
+│   ├── game-engine.ts #   通用博弈运行时
+│   ├── game-request.ts#   自由文本中的游戏类型与人数解析
 │   ├── llm.ts         #   浏览器 LLM 客户端（双保险 + 400 降级）
 │   ├── normalize.ts   #   结构归一化（异常输出不中断运行）
 │   ├── scripted.ts    #   剧本化应答（回放模式）
+│   ├── replay.ts      #   预设回放与自适应离线博弈应答
 │   ├── observer.ts    #   过程指标
 │   └── ledger.ts      #   Token 账本
 ├── data/scripts/      # 四个预录剧本

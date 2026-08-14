@@ -1,6 +1,11 @@
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist'
-// @ts-ignore - mammoth.browser 没有随包提供类型声明
+// @ts-expect-error - mammoth.browser 没有随包提供类型声明
 import mammoth from 'mammoth/mammoth.browser'
+
+export const MAX_ATTACHMENT_COUNT = 5
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+export const MAX_ATTACHMENT_TEXT_CHARS = 18_000
+export const MAX_ATTACHMENT_CONTEXT_CHARS = 36_000
 
 export interface Attachment {
   id: string
@@ -59,7 +64,8 @@ async function extractText(file: File): Promise<string> {
 
 export async function parseAttachment(file: File): Promise<Attachment> {
   try {
-    const text = await extractText(file)
+    if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('文件超过 10 MB 限制')
+    const text = (await extractText(file)).slice(0, MAX_ATTACHMENT_TEXT_CHARS)
     if (!text.trim()) throw new Error('未能从文件中提取到文本内容')
     return {
       id: attachmentId(),
@@ -84,10 +90,16 @@ export async function parseAttachment(file: File): Promise<Attachment> {
 
 /** 把附件内容压缩为可注入 LLM 上下文的证据摘要。 */
 export function attachmentContext(attachments: Attachment[]): string {
-  const ready = attachments.filter((attachment) => attachment.status === 'ready')
+  const ready = attachments.filter((attachment) => attachment.status === 'ready').slice(0, MAX_ATTACHMENT_COUNT)
   if (ready.length === 0) return ''
-  return ready.map((attachment, index) => {
-    const excerpt = attachment.text.replace(/\s+/g, ' ').trim().slice(0, 18_000)
-    return `【附件 ${index + 1}：${attachment.name}】\n${excerpt}`
-  }).join('\n\n')
+  let remaining = MAX_ATTACHMENT_CONTEXT_CHARS
+  const chunks: string[] = []
+  for (const [index, attachment] of ready.entries()) {
+    if (remaining <= 0) break
+    const header = `【附件 ${index + 1}：${attachment.name}】\n`
+    const excerpt = attachment.text.replace(/\s+/g, ' ').trim().slice(0, Math.max(0, remaining - header.length))
+    chunks.push(header + excerpt)
+    remaining -= header.length + excerpt.length + 2
+  }
+  return chunks.join('\n\n')
 }

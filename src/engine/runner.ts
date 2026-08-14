@@ -15,23 +15,7 @@ import { classifyComplexity } from '../complexity'
 import { InvocationAudit } from './framework/audit'
 import { createTerminalReport } from './framework/events'
 import { attachmentContext, type Attachment } from '../lib/attachments'
-
-/** 中文游戏名到 GameSpec key 的输入规范化；只负责路由，不写死游戏规则。 */
-function resolveGameTypeAlias(userInput: string, dispatcherGameType: string): string {
-  const aliases: [RegExp, string][] = [
-    [/谁是卧底|卧底游戏/, 'undercover'],
-    [/杀人游戏|警察.*杀手|杀手.*警察/, 'mafia'],
-    [/网络安全|红蓝对抗|攻防演练|入侵检测/, 'cyber_defense'],
-    [/反舞弊|舞弊调查|内鬼调查|企业审计/, 'fraud_audit'],
-    [/狼人杀/, 'werewolf'],
-    [/阿瓦隆|抵抗组织/, 'avalon'],
-    [/德州扑克|扑克/, 'poker'],
-  ]
-  for (const [pattern, gameType] of aliases) {
-    if (pattern.test(userInput)) return gameType
-  }
-  return dispatcherGameType
-}
+import { resolveGameType } from './game-request'
 
 /** Complexity API 不可用时的保守降级值 */
 function emptyComplexity(): ComplexityClassification {
@@ -172,7 +156,7 @@ export async function runInput(
 
   // ---- 轨道二：博弈扩展 ----
   if (profile.task_type === 'competitive') {
-    const gameType = resolveGameTypeAlias(userInput, profile.game_type ?? 'unknown')
+    const gameType = resolveGameType(userInput, profile.game_type)
     emit({ t: 'track_decided', track: 'competitive', reason: `检测到博弈任务（game_type=${gameType}）→ GameSpec 动态装配，复用通用原子策略，不再枚举硬编码游戏` })
     let gameSpec = GAME_REGISTRY[gameType]
     if (!gameSpec) {

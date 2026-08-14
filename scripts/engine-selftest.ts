@@ -15,7 +15,9 @@ import { OrchestrationEngine } from '../src/engine/engine'
 import { createScriptedCaller } from '../src/engine/scripted'
 import { elevatorScript } from '../src/data/scripts/elevator'
 import { GenericGameEngine, buildRoleList, normalizeGameSpec } from '../src/engine/game-engine'
-import { CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, WEREWOLF_SPEC } from '../src/engine/game-specs'
+import { AVALON_SPEC, CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, WEREWOLF_SPEC } from '../src/engine/game-specs'
+import { parseGameRequest } from '../src/engine/game-request'
+import { createReplayCaller, offlineProfile } from '../src/engine/replay'
 
 function testPhase(input: Partial<Phase> & Pick<Phase, 'id' | 'kind'>): Phase {
   const policy = input.policy ?? { A: 'A1', B: 'B2', C: 'C1', D: 'D1', E: 'E1' }
@@ -215,6 +217,36 @@ export async function run() {
   assert.ok(gameResult?.t === 'game_result')
   assert.equal(gameResult?.t === 'game_result' ? gameResult.result.winner_team : undefined, 'good')
   assert.ok(gameEvents.findIndex((event) => event.t === 'game_result') < gameEvents.findIndex((event) => event.t === 'run_done'))
+
+  // 自由输入必须确定性识别游戏与人数，不能被旧预设或六人狼人杀覆盖。
+  assert.deepEqual(parseGameRequest('十二位玩家玩狼人杀'), { gameType: 'werewolf', playerCount: 12 })
+  assert.deepEqual(parseGameRequest('8个人玩阿瓦隆'), { gameType: 'avalon', playerCount: 8 })
+  assert.equal(offlineProfile('12个人玩狼人杀').agent_count, 12)
+  assert.equal(offlineProfile('8个人玩阿瓦隆').game_type, 'avalon')
+  assert.equal(buildRoleList(WEREWOLF_SPEC, 12).filter((role) => role === 'werewolf').length, 4)
+  assert.deepEqual(buildRoleList(AVALON_SPEC, 8), ['merlin', 'percival', 'loyal', 'loyal', 'loyal', 'assassin', 'morgana', 'mordred'])
+
+  const twelvePlayerEvents: import('../src/engine/types').EngineEvent[] = []
+  await new GenericGameEngine(createReplayCaller('12个人玩狼人杀'), (event) => twelvePlayerEvents.push(event), { fast: true })
+    .run(WEREWOLF_SPEC, '12个人玩狼人杀', { playerCount: 12 })
+  const twelveRoster = twelvePlayerEvents.find((event) => event.t === 'game_state' && event.roster?.length === 12)
+  assert.ok(twelveRoster)
+  for (let index = 0; index < twelvePlayerEvents.length; index++) {
+    if (twelvePlayerEvents[index].t !== 'phase_start') continue
+    const phaseEnd = twelvePlayerEvents.findIndex((event, candidateIndex) => candidateIndex > index && event.t === 'phase_start')
+    const sliceEnd = phaseEnd < 0 ? twelvePlayerEvents.length : phaseEnd
+    assert.ok(twelvePlayerEvents.slice(index + 1, sliceEnd).some((event) => event.t === 'game_state' && event.roster?.length === 12), '每个狼人杀阶段都必须广播完整 roster')
+  }
+
+  const avalonEvents: import('../src/engine/types').EngineEvent[] = []
+  await new GenericGameEngine(createReplayCaller('8个人玩阿瓦隆'), (event) => avalonEvents.push(event), { fast: true })
+    .run(AVALON_SPEC, '8个人玩阿瓦隆', { playerCount: 8 })
+  const avalonResult = avalonEvents.find((event) => event.t === 'game_result')
+  assert.ok(avalonResult?.t === 'game_result')
+  assert.equal(avalonResult?.t === 'game_result' ? avalonResult.result.game_type : undefined, 'avalon')
+  assert.ok(avalonResult?.t === 'game_result' && ['good', 'evil'].includes(avalonResult.result.winner_team))
+  assert.ok(avalonEvents.some((event) => event.t === 'game_event' && event.event.kind === 'GameAction' && event.event.action === 'resolve_quest'))
+  assert.ok(avalonEvents.some((event) => event.t === 'game_state' && event.roster?.length === 8))
 
   const caller = createScriptedCaller(elevatorScript)
   const compiled = await compileScenario(caller, '电梯议事端到端自测', elevatorScript.dispatch, () => {})
