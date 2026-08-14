@@ -112,7 +112,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
     setExporting(kind)
     setExportError(null)
     try {
-      await exportReportAsPdf(target, selectedReport, selectedReport.meta.title)
+      await exportReportAsPdf(target, selectedReport.meta.title)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setExportError(message)
@@ -127,7 +127,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
     setExporting('print')
     setExportError(null)
     try {
-      await printReportAsPdf(reportRef.current, report)
+      await printReportAsPdf(reportRef.current)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setExportError(message)
