@@ -1,6 +1,6 @@
 # MA-Collab · 通用多智能体编排框架 Demo
 
-> 一套框架，议事与博弈通用。输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并附试卷评分；博弈与对抗模拟加载声明式 GameSpec 复用同一套策略，并保证每局给出明确胜负。**不为任何场景手写代码。**
+> 一套框架，议事与博弈通用。输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告；博弈与对抗模拟加载声明式 GameSpec 复用同一套策略，并保证每局给出明确胜负。**不为任何场景手写代码。**
 
 纯前端 React 应用（TypeScript + Vite + Tailwind）。Query Complexity 与其余生成任务共用用户在页面中配置的 OpenAI 兼容模型 API，无需额外分类服务或模型下载。
 
@@ -17,11 +17,11 @@ Dispatcher（一次 LLM 调用，~300 tokens）
     ├── task_type = collaborative → Scenario Compiler（六步）
     │       Step1 场景分类（LLM）→ Step2 查 30 格决策表（确定性 0 tok）
     │       → Step3 生成 Agent Pool（LLM）→ Step4 信息流设计（0 tok）
-    │       → Step5 阶段序列+条件边（0 tok）→ Step6 评测试卷冻结（0 tok）
+    │       → Step5 阶段序列+条件边（0 tok）→ 内部安全与终止状态检查
     │       └── OrchestrationEngine：Open-first Fishbowl
     │           全员独立首发 → 方案归并 → 轻量评分 → 冲突分析
     │           → 鱼缸两轮（按冲突数据选内圈 + 摘要继承 + ≥2 席轮换）
-    │           → 修订方案 → 试卷阅卷（红线门 + 客观 40 + 主观 60）→ 报告
+    │           → 修订方案 → 内部检查 → 面向用户的结论报告
     └── task_type = competitive → GameRegistry / 动态 GameSpec
             复用私聊、权限信息、侦查、公开发言、投票、组队、任务与终局判定
             狼人杀只是预设之一；同一机制可运行阿瓦隆、谁是卧底、杀人游戏、网络攻防、反舞弊调查等
@@ -63,7 +63,7 @@ Dispatcher（一次 LLM 调用，~300 tokens）
 
 ## 双模式运行
 
-- **Live 模式**：在界面填入 OpenAI 兼容端点（Base URL + API Key + 模型），浏览器直连服务商，Dispatcher 分类、Agent 生成、每场发言、阅卷评分全部实时生成。Key 仅存于当前标签页的 `sessionStorage`，只发往用户自选服务商；旧版 `localStorage` 配置会自动迁移并清除旧副本。
+- **Live 模式**：在界面填入 OpenAI 兼容端点（Base URL + API Key + 模型），浏览器直连服务商，Dispatcher 分类、Agent 生成和每场发言全部实时生成。Key 仅存于当前标签页的 `sessionStorage`，只发往用户自选服务商；旧版 `localStorage` 配置会自动迁移并清除旧副本。
 - **回放模式**：无 Key 时，四个预设继续使用原有冻结剧本；自由输入的内置博弈则根据游戏类型、人数与当前阶段生成确定性离线应答，不再回退到固定的 6 人狼人杀剧本。
 
 ## 健壮性设计
@@ -113,10 +113,10 @@ src/
 │   ├── observer.ts    #   过程指标
 │   └── ledger.ts      #   Token 账本
 ├── data/scripts/      # 四个预录剧本
-├── components/        # 视图组件（鱼缸环形图/评分矩阵/试卷/狼人杀等）
+├── components/        # 视图组件（鱼缸环形图/方案矩阵/狼人杀等）
 ├── hooks/             # 事件流归约 Hook
 ```
 
 ## 边界声明
 
-AI 议事结果仅用于辅助分析，**不替代真实公共决策与实地调研**。Demo 中的评分与指标用于展示框架机制，不构成对议题本身的结论。
+AI 议事结果仅用于辅助分析，**不替代真实公共决策与实地调研**。内部检查与过程指标不作为面向用户的正式评价结论。

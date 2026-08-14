@@ -24,6 +24,8 @@ export function MetricsPanel({ metrics, ledger, terminalState, terminalReport, e
   modelInvocations?: ModelInvocation[]
   runTrace?: RunTraceEntry[]
 }) {
+  const visibleLedgerEntries = Object.entries(ledger.by_phase).filter(([phase]) => phase !== 'exam')
+  const visibleRunTrace = runTrace?.filter((item) => item.phase_id !== 'exam') ?? []
   return (
     <div className="space-y-4">
       {/* Token 账本 */}
@@ -37,8 +39,8 @@ export function MetricsPanel({ metrics, ledger, terminalState, terminalReport, e
           <span className="text-[11px] text-neutral-400">tokens · {ledger.calls} 次调用</span>
         </div>
         <div className="mt-3 space-y-1">
-          {Object.entries(ledger.by_phase).map(([phase, tokens]) => {
-            const max = Math.max(...Object.values(ledger.by_phase), 1)
+          {visibleLedgerEntries.map(([phase, tokens]) => {
+            const max = Math.max(...visibleLedgerEntries.map(([, value]) => value), 1)
             return (
               <div key={phase} className="flex items-center gap-2">
                 <span className="w-24 truncate font-mono text-[10.5px] text-neutral-500">{phase}</span>
@@ -80,9 +82,9 @@ export function MetricsPanel({ metrics, ledger, terminalState, terminalReport, e
             ))}
           </div>
         )}
-        {(runTrace?.length ?? 0) > 0 && (
+        {visibleRunTrace.length > 0 && (
           <div className="mt-3 border-t border-neutral-50 pt-2">
-            {runTrace?.filter((item) => item.state === 'completed' || item.state === 'failed').slice(-5).map((item) => (
+            {visibleRunTrace.filter((item) => item.state === 'completed' || item.state === 'failed').slice(-5).map((item) => (
               <div key={item.id} className="flex items-center justify-between py-0.5 text-[11px]">
                 <span className="truncate font-mono text-neutral-500">{item.phase_id}</span>
                 <span className={item.state === 'failed' ? 'text-red-600' : 'text-neutral-400'}>{item.state}</span>

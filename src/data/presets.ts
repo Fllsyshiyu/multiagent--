@@ -22,7 +22,7 @@ export const PRESETS: Preset[] = [
     label: '电梯加装议事',
     input: '老旧小区加装电梯：六层无电梯老楼，高层老人上下楼困难，低层担心采光和房价，费用分摊谈不拢，社区该如何推进？',
     track_hint: 'collaborative',
-    description: '协作轨道 · 两阶段鱼缸议事 + 试卷评估',
+    description: '协作轨道 · 两阶段鱼缸议事 + 可追踪报告',
     script: elevatorScript,
   },
   {

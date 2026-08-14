@@ -185,22 +185,6 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
       ]))
     }
 
-    if (state.examResult) {
-      const exam = state.examResult
-      sections.push(section('exam', '议事质量评估', [
-        {
-          kind: 'status',
-          label: '红线门',
-          text: exam.red_line_gate.toUpperCase(),
-          tone: exam.red_line_gate === 'pass' ? 'success' : 'danger',
-        },
-        metric('客观题', `${exam.objective_total} / 40`),
-        metric('主观题', `${exam.subjective_total} / 60`),
-        metric('总分', `${exam.total} / 100`),
-        text(exam.grade_comment || ''),
-      ]))
-    }
-
     if (state.terminalReport) {
       sections.push(section('conclusion', '结论与授权边界', [
         text(state.terminalReport.reason_codes?.length ? `原因编码：${state.terminalReport.reason_codes.join('、')}` : '原因未记录'),

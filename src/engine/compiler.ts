@@ -67,7 +67,7 @@ export async function compileScenario(
 
   // Step 5 · 阶段序列 + 条件边（0 tokens）
   const phases = buildDeliberationPhases(combo)
-  onStep(5, '阶段序列 + 条件边', `${phases.length} 个阶段：全员首发 → 方案归并 → 轻量评分 → 冲突分析 → 鱼缸两轮 → 方案生成 → 试卷阅卷`, 0)
+  onStep(5, '阶段序列 + 条件边', `${phases.length - 1} 个用户可见阶段：全员首发 → 方案归并 → 轻量评分 → 冲突分析 → 鱼缸两轮 → 方案生成 → 结论报告`, 0)
 
   // Step 6 · 评估标准生成（0 tokens，试卷在议事开始前冻结）
   const exam = buildExamBlueprint(userInput)
@@ -203,7 +203,7 @@ export function buildDeliberationPhases(combo: StrategyCombo): Phase[] {
       exit_conditions: ['mandatory_gates_evaluated'],
     }),
     phase({
-      id: 'report', name: '最终报告', purpose: '共识、分歧、少数意见、修订路径、成绩与结论边界',
+      id: 'report', name: '最终报告', purpose: '共识、分歧、少数意见、修订路径与结论边界',
       policy: { A: 'A3', B: 'B2', C: 'C1', D: 'D2', E: 'E1' }, protocol_id: 'audit_report_v1', depends_on: ['exam'],
       kind: 'report', config: {},
       transitions: [],

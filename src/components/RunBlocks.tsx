@@ -7,7 +7,6 @@ import type { ScenarioConfig, TaskProfile, TaskType, PlanScoreCard, CandidatePro
 import { Chip, SectionCard, BlockHeader, StrategyChips, Spinner, AgentAvatar, TokenBadge } from './common'
 import { ArtifactView, ProposalCard, ScoreMatrix } from './Artifacts'
 import { FishbowlCircle } from './Fishbowl'
-import { ExamBlueprintView, ExamResultView } from './Exam'
 import { GameActionLine, GameResultCard, GameRoster, GameSpeechBubble, VoteTable } from './Werewolf'
 import { FinalProposalView } from './Artifacts'
 import { ComplexityBlock } from './Complexity'
@@ -66,13 +65,13 @@ export function TrackBlock({ track, reason }: { track: TaskType; reason: string 
 
 // ---------- Scenario Compiler ----------
 export function CompileBlock({ steps, config }: { steps: { step: number; name: string; detail: string; tokens: number }[]; config?: ScenarioConfig }) {
-  const stepNames = ['场景分类', '查决策表', '生成 Agent', '信息流设计', '阶段与条件边', '评估冻结']
+  const stepNames = ['场景分类', '查决策表', '生成 Agent', '信息流设计', '阶段与条件边']
   return (
     <SectionCard>
       <BlockHeader index="2" title="Scenario Compiler · 场景编译" sub="把场景编译成可执行配置：仅 Step 1/3 消耗 LLM tokens，其余为确定性规则" />
       <div className="px-5 py-4">
         <ol className="space-y-2">
-          {[1, 2, 3, 4, 5, 6].map((n) => {
+          {[1, 2, 3, 4, 5].map((n) => {
             const s = steps.find((x) => x.step === n)
             return (
               <li key={n} className="flex items-start gap-3">
@@ -210,10 +209,8 @@ function PhaseItems({ phase, config, prevInner }: { phase: PhaseBlock; config?: 
         )
         break
       case 'exam_frozen':
-        elements.push(<ExamBlueprintView key={idx} bp={e.blueprint} />)
-        break
       case 'exam_result':
-        elements.push(<ExamResultView key={idx} result={e.result} />)
+        // 阅卷用于内部安全与终止状态判断，不作为面向用户的评分内容展示。
         break
       case 'final_proposal':
         elements.push(<FinalProposalView key={idx} p={e.proposal} />)

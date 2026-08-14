@@ -163,7 +163,7 @@ export default function Home() {
               议事与博弈通用
             </h1>
             <p className="mx-auto mt-4 max-w-xl text-[14.5px] leading-relaxed text-neutral-500">
-              输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并附试卷评分；
+              输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告；
               博弈游戏加载扩展复用同一套策略。不为任何场景手写代码。
             </p>
           </div>
@@ -352,7 +352,7 @@ export default function Home() {
             {[
               { t: '该不该协作有评分', d: 'Dispatcher 一次调用判断 agent_count 与 task_type，不是所有问题都启动多智能体' },
               { t: '怎么协作有配方', d: '30 格决策表查得 A/B/C/D/E 策略组合，确定性规则 0 tokens' },
-              { t: '结果好坏有试卷', d: '红线门 + 客观题 40 + 主观 Rubric 60，议事前冻结、议事后再阅卷' },
+              { t: '结论边界有记录', d: '保留证据缺口、少数意见、修订路径和真实授权边界' },
             ].map((f) => (
               <div key={f.t} className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
                 <div className="text-[13.5px] font-bold text-neutral-900">{f.t}</div>
@@ -377,6 +377,7 @@ export default function Home() {
                 let lastInner: string[] | undefined
                 let phaseIndex = 0
                 return state.blocks.map((b, i) => {
+                  if (b.kind === 'phase' && b.phase.id === 'exam') return null
                   let prevInner: string[] | undefined
                   if (b.kind === 'phase') {
                     phaseIndex += 1
@@ -460,6 +461,7 @@ function AgentConfigPanel({
   )
   const [sharedProfileId, setSharedProfileId] = useState(defaultProfileId)
   const profileForId = (profileId: string) => profiles.find((profile) => profile.id === profileId)
+  const hasProfiles = profiles.length > 0
 
   const confirm = () => {
     const shared = profileForId(sharedProfileId) ?? profiles[0]
@@ -479,11 +481,13 @@ function AgentConfigPanel({
         <button onClick={onCancel} className="text-[12.5px] text-neutral-400 hover:text-neutral-600">取消</button>
       </div>
       <p className="mt-1 text-[12.5px] text-neutral-500">
-        Dispatcher 已分析出 {config.agents.length} 个 Agent 角色。您可选择统一模型或为不同 Agent 分配不同基座模型。
+        {hasProfiles
+          ? `Dispatcher 已分析出 ${config.agents.length} 个 Agent 角色。您可选择统一模型或为不同 Agent 分配不同基座模型。`
+          : `Dispatcher 已分析出 ${config.agents.length} 个 Agent 角色。当前使用预设回放，无需选择模型。`}
       </p>
 
       {/* 模型模式切换 */}
-      <div className="mt-4 flex items-center gap-2">
+      {hasProfiles && <div className="mt-4 flex items-center gap-2">
         <span className="text-[12px] font-medium text-neutral-600">模型分配：</span>
         <div className="inline-flex rounded-md border border-neutral-200 bg-neutral-50 p-0.5">
           <button
@@ -499,7 +503,7 @@ function AgentConfigPanel({
             分别指定
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* Agent 卡片 */}
       <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -533,7 +537,7 @@ function AgentConfigPanel({
         ))}
       </div>
 
-      {mode === 'shared' && (
+      {hasProfiles && mode === 'shared' && (
         <div className="mt-3">
           <label className="mb-1 block text-[12px] font-medium text-neutral-600">统一基座模型</label>
           <select
@@ -552,11 +556,14 @@ function AgentConfigPanel({
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <span className="text-[11px] text-neutral-400">
-          {mode === 'shared' ? '所有 Agent 使用统一配置' : `${Object.keys(perAgentProfileIds).length} 个 Agent 可分别使用独立端点与 Key`}
+          {!hasProfiles
+            ? '所有 Agent 使用预设回放应答'
+            : mode === 'shared'
+              ? '所有 Agent 使用统一配置'
+              : `${Object.keys(perAgentProfileIds).length} 个 Agent 可分别使用独立端点与 Key`}
         </span>
         <button
           onClick={confirm}
-          disabled={profiles.length === 0}
           className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-200"
         >
           确认并启动议事
