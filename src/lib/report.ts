@@ -407,6 +407,32 @@ const PDF_RENDER_PRESETS = [
   { scale: 1, quality: 0.55 },
 ] as const
 
+function cropCanvasPage(
+  source: HTMLCanvasElement,
+  offsetY: number,
+  height: number,
+): HTMLCanvasElement {
+  const page = document.createElement('canvas')
+  page.width = source.width
+  page.height = height
+  const context = page.getContext('2d')
+  if (!context) throw new Error('无法创建 PDF 页面画布')
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, page.width, page.height)
+  context.drawImage(
+    source,
+    0,
+    offsetY,
+    source.width,
+    height,
+    0,
+    0,
+    source.width,
+    height,
+  )
+  return page
+}
+
 async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
   let smallestPdf: jsPDF | null = null
   let smallestSize = Number.POSITIVE_INFINITY
@@ -493,24 +519,27 @@ async function renderReportPdfWithPreset(
       } finally {
         document.body.removeChild(container)
       }
-      const imageData = canvas.toDataURL('image/jpeg', jpegQuality)
       const imageHeight = (canvas.height * contentWidth) / canvas.width
       if (imageHeight > contentHeight) {
-        // 单个块异常超长时按固定页高切片，属于极端兜底。
-        let heightLeft = imageHeight
-        let position = 0
-        pdf.addImage(imageData, 'JPEG', margin, margin + position, contentWidth, imageHeight, undefined, 'FAST')
-        heightLeft -= contentHeight
-        while (heightLeft > 0) {
-          position -= contentHeight
-          pdf.addPage()
-          pdf.addImage(imageData, 'JPEG', margin, margin + position, contentWidth, imageHeight, undefined, 'FAST')
-          heightLeft -= contentHeight
+        // 长块只把当前页范围裁出来，避免整张长图在每个分页重复嵌入。
+        const pagePixelHeight = Math.max(1, Math.floor((contentHeight * canvas.width) / contentWidth))
+        let offsetY = 0
+        let firstPage = true
+        while (offsetY < canvas.height) {
+          const sliceHeight = Math.min(pagePixelHeight, canvas.height - offsetY)
+          const slice = cropCanvasPage(canvas, offsetY, sliceHeight)
+          const sliceData = slice.toDataURL('image/jpeg', jpegQuality)
+          const slicePdfHeight = (sliceHeight * contentWidth) / canvas.width
+          if (!firstPage) pdf.addPage()
+          pdf.addImage(sliceData, 'JPEG', margin, margin, contentWidth, slicePdfHeight, undefined, 'FAST')
+          firstPage = false
+          offsetY += sliceHeight
         }
         y = margin
         pdf.addPage()
         continue
       }
+      const imageData = canvas.toDataURL('image/jpeg', jpegQuality)
       if (y + imageHeight > pageHeight - margin) {
         pdf.addPage()
         y = margin
