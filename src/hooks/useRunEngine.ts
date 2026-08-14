@@ -30,7 +30,7 @@ export interface PhaseBlock {
 
 export type Block =
   | { kind: 'complexity'; running: boolean; result?: import('../complexity').ComplexityResult; tokens?: number; source?: 'api' }
-  | { kind: 'dispatch'; running: boolean; profile?: TaskProfile; tokens?: number }
+  | { kind: 'dispatch'; running: boolean; profile?: TaskProfile; tokens?: number; userInput?: string }
   | { kind: 'track'; track: TaskType; reason: string }
   | { kind: 'compile'; steps: { step: number; name: string; detail: string; tokens: number }[]; config?: ScenarioConfig }
   | { kind: 'phase'; phase: PhaseBlock }
@@ -198,11 +198,12 @@ function reduceEvent(prev: RunState, e: EngineEvent): RunState {
       break
     }
     case 'dispatch_start':
-      blocks.push({ kind: 'dispatch', running: true })
+      blocks.push({ kind: 'dispatch', running: true, userInput: e.user_input })
       break
     case 'dispatch_done': {
       const i = blocks.findIndex((b) => b.kind === 'dispatch')
-      if (i >= 0) blocks[i] = { kind: 'dispatch', running: false, profile: e.profile, tokens: e.tokens }
+      const block = blocks[i]
+      if (block?.kind === 'dispatch') blocks[i] = { ...block, running: false, profile: e.profile, tokens: e.tokens }
       break
     }
     case 'track_decided':

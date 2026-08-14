@@ -1,7 +1,10 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type RefObject } from 'react'
 import { Download, X } from 'lucide-react'
 import type { RunState } from '../hooks/useRunEngine'
-import { buildDeliberationReport, exportReportAsPdf, printReportAsPdf, type ReportItem, type ReportSection } from '../lib/report'
+import {
+  buildDeliberationReport, buildFullDeliberationReport, exportReportAsPdf, printReportAsPdf,
+  type DeliberationReport, type ReportItem, type ReportSection,
+} from '../lib/report'
 
 function toneClass(tone?: ReportItem['tone']) {
   if (tone === 'success') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -55,7 +58,7 @@ function ReportItemView({ item }: { item: ReportItem }) {
     )
   }
   return (
-    <div data-report-block="text" className="text-[13px] leading-relaxed text-neutral-700">
+    <div data-report-block="text" className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-700">
       {item.label && <span className="mr-1 font-medium text-neutral-900">{item.label}</span>}
       {item.text}
     </div>
@@ -75,30 +78,53 @@ function ReportSectionView({ section }: { section: ReportSection }) {
   )
 }
 
+function ReportDocument({ report, containerRef }: { report: DeliberationReport; containerRef: RefObject<HTMLDivElement | null> }) {
+  return (
+    <div ref={containerRef} className="bg-white px-8 py-7">
+      <div className="mb-6 border-b border-neutral-100 pb-5">
+        <div data-report-block="report-title" className="text-[22px] font-bold leading-tight text-neutral-900">{report.meta.title}</div>
+        <div data-report-block="report-category" className="mt-1 text-[13px] text-neutral-500">{report.meta.categoryLabel}</div>
+        <div data-report-block="report-issue" className="mt-3 rounded-lg bg-neutral-50 px-4 py-3 text-[13px] leading-relaxed text-neutral-700">
+          <span className="font-medium text-neutral-900">议题：</span>
+          {report.meta.issue || '未记录'}
+        </div>
+      </div>
+      {report.sections.map((section) => <ReportSectionView key={section.id} section={section} />)}
+      <div data-report-block="report-footer" className="mt-4 border-t border-neutral-100 pt-4 text-center text-[11px] text-neutral-400">
+        本报告由 MA-Collab 多智能体编排框架自动生成 · AI 分析结果仅用于辅助参考
+      </div>
+    </div>
+  )
+}
+
 export function ReportPanel({ state, onClose }: { state: RunState; onClose: () => void }) {
   const reportRef = useRef<HTMLDivElement>(null)
-  const [exporting, setExporting] = useState(false)
+  const fullReportRef = useRef<HTMLDivElement>(null)
+  const [exporting, setExporting] = useState<'concise' | 'full' | 'print' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
   const report = useMemo(() => buildDeliberationReport(state), [state])
+  const fullReport = useMemo(() => buildFullDeliberationReport(state), [state])
 
-  const handleExport = async () => {
-    if (!reportRef.current || exporting) return
-    setExporting(true)
+  const handleExport = async (kind: 'concise' | 'full') => {
+    const target = kind === 'full' ? fullReportRef.current : reportRef.current
+    const selectedReport = kind === 'full' ? fullReport : report
+    if (!target || exporting) return
+    setExporting(kind)
     setExportError(null)
     try {
-      await exportReportAsPdf(reportRef.current, report.meta.title)
+      await exportReportAsPdf(target, selectedReport.meta.title)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setExportError(message)
       console.error('PDF 导出失败：', error)
     } finally {
-      setExporting(false)
+      setExporting(null)
     }
   }
 
   const handlePrint = async () => {
     if (!reportRef.current || exporting) return
-    setExporting(true)
+    setExporting('print')
     setExportError(null)
     try {
       await printReportAsPdf(reportRef.current)
@@ -107,7 +133,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
       setExportError(message)
       console.error('打印失败：', error)
     } finally {
-      setExporting(false)
+      setExporting(null)
     }
   }
 
@@ -127,19 +153,27 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handleExport}
-              disabled={exporting}
+              onClick={() => handleExport('concise')}
+              disabled={Boolean(exporting)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3.5 py-2 text-[12.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
-              {exporting ? '导出中…' : '导出 PDF'}
+              {exporting === 'concise' ? '导出中…' : '导出精炼报告'}
+            </button>
+            <button
+              onClick={() => handleExport('full')}
+              disabled={Boolean(exporting)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-900 px-3.5 py-2 text-[12.5px] font-medium text-neutral-900 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {exporting === 'full' ? '导出中…' : '导出完整报告'}
             </button>
             <button
               onClick={handlePrint}
-              disabled={exporting}
+              disabled={Boolean(exporting)}
               className="rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
             >
-              {exporting ? '生成中…' : '打印'}
+              {exporting === 'print' ? '生成中…' : '打印'}
             </button>
             <button onClick={onClose} className="rounded-lg border border-neutral-200 p-2 text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-700" aria-label="关闭">
               <X className="h-4 w-4" />
@@ -151,20 +185,10 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
             自动导出失败：{exportError}。可点击「打印」，在浏览器打印对话框中选择“另存为 PDF”。
           </div>
         )}
-        <div ref={reportRef} className="bg-white px-8 py-7">
-          <div className="mb-6 border-b border-neutral-100 pb-5">
-            <div data-report-block="report-title" className="text-[22px] font-bold leading-tight text-neutral-900">{report.meta.title}</div>
-            <div data-report-block="report-category" className="mt-1 text-[13px] text-neutral-500">{report.meta.categoryLabel}</div>
-            <div data-report-block="report-issue" className="mt-3 rounded-lg bg-neutral-50 px-4 py-3 text-[13px] leading-relaxed text-neutral-700">
-              <span className="font-medium text-neutral-900">议题：</span>
-              {report.meta.issue || '未记录'}
-            </div>
-          </div>
-          {report.sections.map((section) => <ReportSectionView key={section.id} section={section} />)}
-          <div data-report-block="report-footer" className="mt-4 border-t border-neutral-100 pt-4 text-center text-[11px] text-neutral-400">
-            本报告由 MA-Collab 多智能体编排框架自动生成 · AI 分析结果仅用于辅助参考
-          </div>
-        </div>
+        <ReportDocument report={report} containerRef={reportRef} />
+      </div>
+      <div className="fixed left-[-10000px] top-0 w-[794px] bg-white" aria-hidden="true">
+        <ReportDocument report={fullReport} containerRef={fullReportRef} />
       </div>
     </div>
   )

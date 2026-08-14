@@ -1,7 +1,7 @@
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import type { RunState } from '../hooks/useRunEngine'
-import type { EngineEvent } from '../engine/types'
+import type { Artifact, EngineEvent } from '../engine/types'
 import { STRATEGY_LABELS } from '../engine/dispatcher'
 
 export type ReportTone = 'default' | 'success' | 'warning' | 'danger'
@@ -85,7 +85,7 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
   }
   const meta: ReportMeta = {
     title: '议事报告',
-    issue: profile?.reasoning ? profile.reasoning : config?.user_input ?? state.blocks.find((block) => block.kind === 'dispatch') ? '见事件流' : '',
+    issue: config?.user_input ?? dispatch?.userInput ?? profile?.reasoning ?? '',
     category,
     categoryLabel: categoryLabels[category],
     terminalState: state.terminalState ?? state.status.toUpperCase(),
@@ -94,8 +94,6 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
     calls: state.ledger.calls,
     agentCount: profile?.agent_count ?? config?.agents.length ?? 0,
   }
-  meta.issue = config?.user_input ?? profile?.reasoning ?? ''
-
   const summaryItems: ReportItem[] = [
     metric('议题', meta.issue || '未记录'),
     metric('任务类别', meta.categoryLabel),
@@ -247,6 +245,146 @@ export function buildDeliberationReport(state: RunState): DeliberationReport {
   }
 
   return { meta, sections }
+}
+
+function values(items: string[] | undefined, fallback = '无'): string {
+  return items?.length ? items.join('；') : fallback
+}
+
+function artifactText(artifact: Artifact, agentName: (id?: string) => string): string {
+  switch (artifact.kind) {
+    case 'InitialAssessmentCard':
+      return `${artifact.content}\n初始立场：${artifact.initial_stance}\n主要关切：${values(artifact.main_concerns)}\n方案草案：${values(artifact.proposal_sketch)}\n不可让步项：${values(artifact.non_negotiables)}\n可能让步：${values(artifact.possible_concessions)}`
+    case 'CandidateProposal':
+      return `【${artifact.proposal_id}】${artifact.title}\n${artifact.summary}\n支持者：${artifact.supporters.map(agentName).join('、') || '未记录'}`
+    case 'PlanScoreCard':
+      return `方案 ${artifact.proposal_id}：支持度 ${artifact.support_score}/5，可行性 ${artifact.feasibility_score}/5，公平性 ${artifact.fairness_score}/5，风险控制 ${artifact.risk_score}/5\n主要异议：${artifact.main_objection || '无'}\n支持条件：${artifact.support_condition || '无'}`
+    case 'ConflictMap':
+      return `领先方案：${artifact.leading_proposal || '未记录'}\n主要支持方：${artifact.main_supporters.map(agentName).join('、') || '无'}\n主要反对方：${artifact.main_opponents.map(agentName).join('、') || '无'}\n否决风险：${values(artifact.veto_risks)}\n少数意见：${values(artifact.minority_opinions)}\n证据缺口：${values(artifact.evidence_gaps)}`
+    case 'ObjectionCard':
+      return `第 ${artifact.round} 轮 · ${artifact.objection_type}\n异议：${artifact.objection}\n要求修订：${values(artifact.required_revision)}\n支持条件：${artifact.support_condition || '无'}${artifact.reply_to ? `\n回应对象：${agentName(artifact.reply_to)}` : ''}`
+    case 'OuterObservationCard':
+      return `第 ${artifact.round} 轮外圈观察\n遗漏问题：${artifact.missed_issue}\n异议：${artifact.objection}\n所需证据：${values(artifact.evidence_needed)}\n申请进入内圈：${artifact.request_to_enter_inner_circle ? '是' : '否'}；已吸收：${artifact.absorbed ? '是' : '否'}`
+    case 'FishbowlSummaryCard':
+      return `第 ${artifact.round} 轮摘要\n多数意见：${values(artifact.majority_views)}\n少数意见：${values(artifact.minority_views)}\n核心冲突：${values(artifact.core_conflicts)}\n未答问题：${values(artifact.unanswered_questions)}\n已吸收观察：${values(artifact.absorbed_observations)}\n下一轮邀请：${artifact.next_round_invitees.map(agentName).join('、') || '无'}`
+    case 'FinalProposal':
+      return `${artifact.title}\n目标：${artifact.goal}\n措施：${values(artifact.measures)}\n责任主体：${values(artifact.responsible_parties)}\n资源来源：${artifact.resources}\n时间安排：${artifact.timeline}\n风险控制：${values(artifact.risk_control)}\n退出机制：${artifact.exit_mechanism}\n复评机制：${artifact.review_mechanism}\n修订路径：${values(artifact.revision_path)}`
+    case 'ExamBlueprint':
+    case 'ExamResult':
+      return ''
+  }
+}
+
+/**
+ * 完整报告保留当前精炼报告作为首页，并追加运行时已经留存的全部公开讨论记录。
+ * 内部阅卷仍按产品约定隐藏；模型系统提示与用户提示也不进入导出文件。
+ */
+export function buildFullDeliberationReport(state: RunState): DeliberationReport {
+  const concise = buildDeliberationReport(state)
+  const compile = state.blocks.find((block): block is Extract<RunState['blocks'][number], { kind: 'compile' }> => block.kind === 'compile')
+  const config = compile?.config
+  const latestRoster = state.blocks
+    .filter((block): block is Extract<RunState['blocks'][number], { kind: 'phase' }> => block.kind === 'phase')
+    .flatMap((block) => block.phase.items)
+    .filter((item) => item.data.t === 'game_state' && item.data.roster?.length)
+    .at(-1)?.data
+  const roster = latestRoster?.t === 'game_state' ? latestRoster.roster ?? [] : []
+  const agentName = (id?: string) => config?.agents.find((agent) => agent.id === id)?.name ?? roster.find((player) => player.id === id)?.name ?? id ?? '系统组件'
+  const sections: ReportSection[] = [...concise.sections]
+
+  if (compile?.steps.length) {
+    sections.push(section('full-compile', '场景编译完整记录', compile.steps.map((step) => text(
+      `Step ${step.step} · ${step.name}\n${step.detail}\nToken：${step.tokens}`,
+    ))))
+  }
+
+  if (config?.agents.length) {
+    sections.push(section('full-agent-contracts', 'Agent 完整角色配置', config.agents.map((agent) => text(
+      `${agent.name} · ${agent.archetype}\n关系：${agent.relationship}\n初始立场：${agent.stance}\n核心利益：${values(agent.interests)}\n允许表达：${values(agent.can_say)}\n发言边界：${values(agent.cannot_say)}\n能力：${values(agent.capabilities)}\nSOP：${values(agent.sop)}`,
+    ))))
+  }
+
+  for (const [blockIndex, block] of state.blocks.entries()) {
+    if (block.kind !== 'phase' || block.phase.id === 'exam') continue
+    const items: ReportItem[] = []
+    for (const phaseItem of block.phase.items) {
+      const event = phaseItem.data
+      switch (event.t) {
+        case 'agent_start':
+          items.push(text(`调度 ${event.name}（${event.archetype}）\n上下文模式：${event.context_mode}`))
+          break
+        case 'speech':
+          items.push({ kind: 'text', label: `${event.name}（${event.audience}）`, text: event.content })
+          break
+        case 'artifact': {
+          const content = artifactText(event.artifact, agentName)
+          if (content) items.push({ kind: 'text', label: `${agentName(event.agent_id)} · ${event.artifact.kind}`, text: content })
+          break
+        }
+        case 'fishbowl_plan':
+          items.push(text(`Fishbowl 第 ${event.round} 轮\n内圈：${event.inner.map(agentName).join('、') || '无'}\n外圈：${event.outer.map(agentName).join('、') || '无'}\n调度理由：${event.reason}`))
+          break
+        case 'retry':
+          items.push(text(`重试第 ${event.attempt} 次：${event.reason}`, 'warning'))
+          break
+        case 'game_event':
+          if (event.event.kind === 'GameSpeech') {
+            items.push({ kind: 'text', label: `${agentName(event.event.agent_id)} · ${event.event.audience === 'private' ? '私密发言' : '公开发言'}`, text: `第 ${event.event.round} 轮 / ${event.event.phase_label}\n${event.event.content}` })
+          } else {
+            items.push({ kind: 'text', label: `${agentName(event.event.actor)} · ${event.event.action_label}`, text: `第 ${event.event.round} 轮 / ${event.event.phase_label}\n目标：${event.event.target ? agentName(event.event.target) : '无'}\n结果：${event.event.result}` })
+          }
+          break
+        case 'game_state':
+          items.push(text(`阶段状态：${event.phase}\n存活：${event.alive.map(agentName).join('、') || '无'}\n出局：${event.dead.map(agentName).join('、') || '无'}${event.roster?.length ? `\n角色表：${event.roster.map((player) => `${player.name}=${player.role_label || player.role}`).join('；')}` : ''}`))
+          break
+        case 'vote':
+          items.push(text(`投票明细：\n${event.votes.map((vote) => `${agentName(vote.agent_id)} → ${agentName(vote.vote)}：${vote.reason}`).join('\n')}\n结果：${event.result}`))
+          break
+        case 'game_result':
+          items.push(text(`胜负结果：${event.result.winner_team === 'draw' ? '平局' : `${event.result.winner_label}获胜`}\n${event.result.description}\n获胜玩家：${event.result.winning_players.map(agentName).join('、') || '无'}\n失败玩家：${event.result.losing_players.map(agentName).join('、') || '无'}`))
+          break
+        case 'final_proposal':
+          items.push({ kind: 'text', label: '最终方案完整内容', text: artifactText(event.proposal, agentName) })
+          break
+        case 'exam_frozen':
+        case 'exam_result':
+          break
+      }
+    }
+    sections.push(section(`full-phase-${block.phase.id}-${blockIndex}`, `${block.phase.name} · 完整记录`, items.length ? items : [text('本阶段没有可公开导出的内容。')], `${block.phase.purpose} · ${block.phase.done ? '已完成' : '未完成'}`))
+  }
+
+  const adaptations = state.blocks.filter((block): block is Extract<RunState['blocks'][number], { kind: 'adaptation' }> => block.kind === 'adaptation')
+  if (adaptations.length) {
+    sections.push(section('full-adaptations', '运行时调整完整记录', adaptations.map((item) => text(
+      `触发：${item.trigger}\n动作：${item.action}\n范围：${item.scope}`,
+    ))))
+  }
+
+  if (state.checkpoints.length) {
+    sections.push(section('full-checkpoints', '任务黑板检查点', state.checkpoints.map((checkpoint) => text(
+      `#${checkpoint.sequence} · ${checkpoint.phase_id} · ${checkpoint.trigger}\n原始目标：${checkpoint.original_objective}\n当前焦点：${checkpoint.current_focus}\n已解决：${values(checkpoint.resolved_items)}\n未决事项：${values(checkpoint.open_items)}\n阻塞事项：${values(checkpoint.blocked_items)}\n已确认事实：${values(checkpoint.confirmed_facts)}\n未核验主张：${values(checkpoint.unverified_claims)}\n缺失证据：${values(checkpoint.missing_evidence)}\n少数意见：${values(checkpoint.minority_positions)}\n下一步：${values(checkpoint.next_required_actions)}\n漂移标记：${values(checkpoint.drift_flags)}\n门控决定：${checkpoint.checkpoint_decision}（${values(checkpoint.decision_reasons)}）`,
+    ))))
+  }
+
+  if (state.eventEvaluations.length) {
+    sections.push(section('full-event-rules', '事件规则评估', state.eventEvaluations.map((evaluation) => text(
+      `${evaluation.rule_id} · ${evaluation.matched ? '已触发' : '未触发'}\n事件：${evaluation.event}\n原因：${evaluation.reason}\n动作：${values(evaluation.actions)}`,
+    ))))
+  }
+
+  const publicInvocations = state.modelInvocations.filter((invocation) => invocation.phase_id !== 'exam')
+  if (publicInvocations.length || state.runTrace.length) {
+    sections.push(section('full-audit', '运行审计', [
+      ...publicInvocations.map((invocation) => text(`${invocation.phase_id} · ${agentName(invocation.agent_id)} · ${invocation.model}\n状态：${invocation.result_status}；Token：${invocation.tokens}；耗时：${Math.round(invocation.latency_ms)} ms${invocation.error ? `\n错误：${invocation.error}` : ''}`)),
+      ...state.runTrace.filter((entry) => entry.phase_id !== 'exam').map((entry) => text(`${entry.phase_id} · ${entry.state}\n转移原因：${entry.transition_reason}\n输入引用：${values(entry.input_refs)}\n输出引用：${values(entry.output_refs)}`)),
+    ]))
+  }
+
+  return {
+    meta: { ...concise.meta, title: '完整议事报告' },
+    sections,
+  }
 }
 
 export async function exportReportAsPdf(element: HTMLElement, filename: string): Promise<void> {
