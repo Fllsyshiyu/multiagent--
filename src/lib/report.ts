@@ -400,7 +400,37 @@ export async function printReportAsPdf(element: HTMLElement): Promise<void> {
   window.open(blobUrl, '_blank')
 }
 
+const PDF_TARGET_BYTES = 20 * 1024 * 1024
+const PDF_RENDER_PRESETS = [
+  { scale: 1.5, quality: 0.82 },
+  { scale: 1.2, quality: 0.68 },
+  { scale: 1, quality: 0.55 },
+] as const
+
 async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
+  let smallestPdf: jsPDF | null = null
+  let smallestSize = Number.POSITIVE_INFINITY
+
+  for (const preset of PDF_RENDER_PRESETS) {
+    const pdf = await renderReportPdfWithPreset(element, preset)
+    const size = pdf.output('arraybuffer').byteLength
+    if (size < smallestSize) {
+      smallestPdf = pdf
+      smallestSize = size
+    }
+    if (size <= PDF_TARGET_BYTES) return pdf
+  }
+  return smallestPdf ?? new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+}
+
+async function renderReportPdfWithPreset(
+  element: HTMLElement,
+  preset: { scale: number; quality: number },
+): Promise<jsPDF> {
+  // JPEG 对白底文本报告远小于无损 PNG，同时使用中等 DPI，避免上百页完整报告被嵌入成几十 MB 图片。
+  const renderScale = preset.scale
+  const jpegQuality = preset.quality
+
   // 克隆到离屏容器，避免模态框的 fixed 定位与滚动容器干扰 html2canvas 渲染。
   const wrapper = document.createElement('div')
   wrapper.style.position = 'fixed'
@@ -446,7 +476,7 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
       let canvas: HTMLCanvasElement
       try {
         canvas = await html2canvas(container, {
-          scale: 2,
+          scale: renderScale,
           useCORS: true,
           backgroundColor: '#ffffff',
           logging: false,
@@ -463,18 +493,18 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
       } finally {
         document.body.removeChild(container)
       }
-      const imageData = canvas.toDataURL('image/png')
+      const imageData = canvas.toDataURL('image/jpeg', jpegQuality)
       const imageHeight = (canvas.height * contentWidth) / canvas.width
       if (imageHeight > contentHeight) {
         // 单个块异常超长时按固定页高切片，属于极端兜底。
         let heightLeft = imageHeight
         let position = 0
-        pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
+        pdf.addImage(imageData, 'JPEG', margin, margin + position, contentWidth, imageHeight, undefined, 'FAST')
         heightLeft -= contentHeight
         while (heightLeft > 0) {
           position -= contentHeight
           pdf.addPage()
-          pdf.addImage(imageData, 'PNG', margin, margin + position, contentWidth, imageHeight)
+          pdf.addImage(imageData, 'JPEG', margin, margin + position, contentWidth, imageHeight, undefined, 'FAST')
           heightLeft -= contentHeight
         }
         y = margin
@@ -485,7 +515,7 @@ async function renderReportPdf(element: HTMLElement): Promise<jsPDF> {
         pdf.addPage()
         y = margin
       }
-      pdf.addImage(imageData, 'PNG', margin, y, contentWidth, imageHeight)
+      pdf.addImage(imageData, 'JPEG', margin, y, contentWidth, imageHeight, undefined, 'FAST')
       y += imageHeight + 2
     }
     return pdf
