@@ -122,7 +122,7 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Chip tone={llmConfig ? 'green' : 'gray'}>{llmConfig ? `Live · ${llmConfig.model}` : '回放模式（未配置 Key）'}</Chip>
+            <Chip tone={llmConfig ? 'green' : 'gray'}>{llmConfig ? `Live · ${llmConfig.model}` : '未配置Key'}</Chip>
             <button
               onClick={() => setShowApiPanel(true)}
               className="rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
