@@ -49,6 +49,13 @@ const CONTENT_MAX_LINES = 9
 
 function wrapParagraph(value: string): string[] {
   if (!value) return ['']
+  return value.split('\n').flatMap((line) => {
+    if (!line) return ['']
+    return wrapSingleLine(line)
+  })
+}
+
+function wrapSingleLine(value: string): string[] {
   const lines: string[] = []
   let current = ''
   for (const char of value) {
@@ -120,6 +127,11 @@ function titleFontSize(value: string, base: number): number {
   return base
 }
 
+function truncateTitle(value: string, maxLength: number): string {
+  const chars = [...value]
+  return chars.length > maxLength ? `${chars.slice(0, maxLength - 1).join('')}…` : value
+}
+
 function addBrandFooter(slide: PptxGenJS.Slide, accent: string) {
   slide.addShape('rect', { x: 0.75, y: 7.12, w: 0.9, h: 0.03, fill: { color: accent } })
   slide.addText('MA-COLLAB · AI 议事汇报', {
@@ -134,7 +146,7 @@ function addBrandFooter(slide: PptxGenJS.Slide, accent: string) {
 }
 
 function addHeader(slide: PptxGenJS.Slide, title: string, accent: string) {
-  slide.addText(title, {
+  slide.addText(truncateTitle(title, 24), {
     x: 0.75,
     y: 0.42,
     w: 10.8,
@@ -172,7 +184,7 @@ function addCoverSlide(pptx: PptxGenJS, report: DeliberationReport, accent: stri
     fontSize: 10,
     color: accent,
   })
-  slide.addText(cleanText(report.meta.title), {
+  slide.addText(truncateTitle(cleanText(report.meta.title), 36), {
     x: 0.9,
     y: 1.45,
     w: 11.4,
@@ -247,7 +259,7 @@ function addSectionDivider(pptx: PptxGenJS, index: number, section: Deliberation
     bold: true,
     color: accent,
   })
-  slide.addText(cleanText(section.title), {
+  slide.addText(truncateTitle(cleanText(section.title), 30), {
     x: 3.4,
     y: 2.35,
     w: 8.5,
