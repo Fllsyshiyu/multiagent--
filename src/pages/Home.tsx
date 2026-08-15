@@ -118,7 +118,7 @@ export default function Home() {
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-[13px] font-bold text-white">M</span>
             <div>
               <div className="text-[14px] font-bold leading-tight">MA-Collab</div>
-              <div className="text-[10.5px] leading-tight text-neutral-400">通用多智能体编排框架 v2.0</div>
+              <div className="text-[10.5px] leading-tight text-neutral-400">通用多智能体编排框架</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
