@@ -208,7 +208,7 @@ export default function Home() {
         /* ====== 入口页 ====== */
         <main className="mx-auto max-w-5xl px-5 pb-24 pt-14 sm:px-7 sm:pt-24">
           <div className="text-center">
-            <h1 className="text-[clamp(128px,14vw,224px)] font-bold leading-[0.98] tracking-[-0.045em]">
+            <h1 className="mt-6 text-[34px] font-bold leading-tight tracking-tight sm:text-[44px]">
               ALLK Agora
             </h1>
             <p className="mx-auto mt-7 max-w-3xl text-[10.85px] leading-[1.75] text-neutral-500 sm:text-[11.9px]">
