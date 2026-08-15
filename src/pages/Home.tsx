@@ -467,6 +467,7 @@ function AgentConfigPanel({
   )
   const [sharedProfileId, setSharedProfileId] = useState(defaultProfileId)
   const profileForId = (profileId: string) => profiles.find((profile) => profile.id === profileId)
+  const profileForBaseUrl = (baseUrl: string) => profiles.find((profile) => profile.base_url.trim().toLowerCase() === baseUrl.trim().toLowerCase())
   const hasProfiles = profiles.length > 0
 
   const updateAgentConfig = (agentId: string, patch: Partial<LLMConfig>) => {
@@ -474,6 +475,15 @@ function AgentConfigPanel({
       ...current,
       [agentId]: { ...current[agentId], ...patch },
     }))
+  }
+
+  const applyPresetToAgent = (agentId: string, preset: (typeof LLM_PRESETS)[number]) => {
+    const saved = profileForBaseUrl(preset.base_url)
+    updateAgentConfig(agentId, {
+      base_url: preset.base_url,
+      model: preset.model,
+      api_key: saved?.api_key ?? '',
+    })
   }
 
   const allPerAgentComplete = config.agents.every((agent) => {
@@ -547,11 +557,7 @@ function AgentConfigPanel({
                   {LLM_PRESETS.map((preset) => (
                     <button
                       key={preset.name}
-                      onClick={() => updateAgentConfig(a.id, {
-                        base_url: preset.base_url,
-                        model: preset.model,
-                        api_key: perAgentConfigs[a.id]?.base_url === preset.base_url ? perAgentConfigs[a.id].api_key : '',
-                      })}
+                      onClick={() => applyPresetToAgent(a.id, preset)}
                       className={`rounded-md border px-2 py-1 text-[10.5px] font-medium transition-colors ${
                         perAgentConfigs[a.id]?.base_url === preset.base_url
                           ? 'border-neutral-900 bg-neutral-900 text-white'
@@ -566,9 +572,22 @@ function AgentConfigPanel({
                   <label className="text-[10.5px] font-medium text-neutral-500">Base URL</label>
                   <input
                     value={perAgentConfigs[a.id]?.base_url ?? ''}
-                    onChange={(e) => updateAgentConfig(a.id, { base_url: e.target.value })}
+                    onChange={(e) => {
+                      const nextBaseUrl = e.target.value
+                      const saved = profileForBaseUrl(nextBaseUrl)
+                      updateAgentConfig(a.id, {
+                        base_url: nextBaseUrl,
+                        api_key: saved?.api_key ?? '',
+                        model: saved?.model ?? perAgentConfigs[a.id]?.model ?? '',
+                      })
+                    }}
                     className="w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-[11px] text-neutral-800 outline-none focus:border-neutral-900"
                   />
+                  {profileForBaseUrl(perAgentConfigs[a.id]?.base_url ?? '') && (
+                    <span className="text-[10.5px] text-neutral-500">
+                      已自动带入「{profileForBaseUrl(perAgentConfigs[a.id]?.base_url ?? '')?.name}」的 API Key
+                    </span>
+                  )}
                   <label className="text-[10.5px] font-medium text-neutral-500">API Key</label>
                   <input
                     value={perAgentConfigs[a.id]?.api_key ?? ''}
