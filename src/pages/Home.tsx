@@ -347,20 +347,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 框架说明 */}
-          <div className="mt-14 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {[
-              { t: '该不该协作有评分', d: 'Dispatcher 一次调用判断 agent_count 与 task_type，不是所有问题都启动多智能体' },
-              { t: '怎么协作有配方', d: '30 格决策表查得 A/B/C/D/E 策略组合，确定性规则 0 tokens' },
-              { t: '结论边界有记录', d: '保留证据缺口、少数意见、修订路径和真实授权边界' },
-            ].map((f) => (
-              <div key={f.t} className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
-                <div className="text-[13.5px] font-bold text-neutral-900">{f.t}</div>
-                <div className="mt-1 text-[12.5px] leading-relaxed text-neutral-500">{f.d}</div>
-              </div>
-            ))}
-          </div>
-
           <footer className="mt-14 text-center text-[11.5px] leading-relaxed text-neutral-400">
             Live 模式下 API Key 仅保存在当前浏览器标签会话，只发往你选择的 LLM 服务商，不经过本项目服务器。
             <br />AI 议事结果仅用于辅助分析，不替代真实公共决策与实地调研。
