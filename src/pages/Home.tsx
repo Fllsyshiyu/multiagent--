@@ -158,7 +158,7 @@ export default function Home() {
     <div className="min-h-screen bg-white text-neutral-900">
       {/* 顶栏 */}
       <header className="sticky top-0 z-30 border-b border-neutral-100 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-6 py-3 sm:px-8">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3 sm:px-6">
           <div className="flex items-center gap-2.5">
             <AgoraLogo />
             <div>
@@ -206,21 +206,21 @@ export default function Home() {
 
       {!started ? (
         /* ====== 入口页 ====== */
-        <main className="mx-auto max-w-5xl px-5 pb-24 pt-14 sm:px-7 sm:pt-24">
+        <main className="mx-auto max-w-3xl px-5 pb-24 pt-16 sm:pt-24">
           <div className="text-center">
             <h1 className="mt-6 text-[34px] font-bold leading-tight tracking-tight sm:text-[44px]">
               ALLK Agora
             </h1>
-            <p className="mx-auto mt-7 max-w-3xl text-[10.85px] leading-[1.75] text-neutral-500 sm:text-[11.9px]">
+            <p className="mx-auto mt-4 max-w-xl text-[14.5px] leading-relaxed text-neutral-500">
               输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告。不为任何场景手写代码。
             </p>
           </div>
 
           {/* 议事模式选择器 */}
           {llmConfig && deliverable === 'text' && (
-            <div className="mt-8 flex flex-col items-center gap-2.5">
-              <span className="text-[12px] font-medium uppercase tracking-widest text-neutral-400">议事模式</span>
-              <div className="inline-flex rounded-xl border border-neutral-200 bg-neutral-50 p-0.5">
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-widest text-neutral-400">议事模式</span>
+              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
                 {([
                   { key: 'auto' as const, label: 'Auto · 智能识别' },
                   { key: 'single' as const, label: '单 Agent' },
@@ -229,7 +229,7 @@ export default function Home() {
                   <button
                     key={m.key}
                     onClick={() => setDelibMode(m.key)}
-                    className={`rounded-lg px-5 py-2 text-[13.5px] font-medium transition-all ${
+                    className={`rounded-md px-4 py-1.5 text-[12.5px] font-medium transition-all ${
                       delibMode === m.key
                         ? 'bg-white text-neutral-900 shadow-sm'
                         : 'text-neutral-500 hover:text-neutral-700'
@@ -239,14 +239,14 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              <span className="text-[12px] text-neutral-400">
+              <span className="text-[11px] text-neutral-400">
                 {delibMode === 'auto' ? 'Dispatcher 自动判别任务类型' : delibMode === 'single' ? '强制使用单 Agent 直接回答' : '强制启动多 Agent 协作议事'}
               </span>
             </div>
           )}
 
           {/* 输入框 */}
-          <div className="mt-10 rounded-[22px] border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
+          <div className="mt-10 rounded-2xl border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
             <textarea
               value={input}
               onChange={(e) => {
@@ -255,11 +255,11 @@ export default function Home() {
               }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAnalyze() } }}
               placeholder={deliverable === 'presentation' ? '描述主题、受众、页数和用途，例如：基于附件制作一份面向管理层的 10 页项目汇报 PPT' : '例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…'}
-              rows={4}
-              className="w-full resize-none rounded-[22px] bg-transparent px-7 pt-5 text-[16px] leading-relaxed outline-none placeholder:text-neutral-400 sm:text-[17px]"
+              rows={3}
+              className="w-full resize-none rounded-2xl bg-transparent px-5 pt-4 text-[15px] leading-relaxed outline-none placeholder:text-neutral-400"
             />
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pb-3">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -271,12 +271,12 @@ export default function Home() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
-                  className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-neutral-200 px-4 py-2.5 text-[13.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Paperclip className="h-4 w-4" />
+                  <Paperclip className="h-3.5 w-3.5" />
                   {uploading ? '解析中…' : '上传附件'}
                 </button>
-                <div className="inline-flex rounded-xl border border-neutral-200 bg-neutral-50 p-0.5" role="group" aria-label="任务交付模式">
+                <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5" role="group" aria-label="任务交付模式">
                   {([
                     { key: 'text' as const, label: '普通任务' },
                     { key: 'presentation' as const, label: '生成 PPT' },
@@ -284,11 +284,11 @@ export default function Home() {
                     <button
                       key={mode.key}
                       onClick={() => selectDeliverable(mode.key)}
-                      className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium transition-all ${
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium transition-all ${
                         deliverable === mode.key ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
                       }`}
                     >
-                      {mode.key === 'presentation' && <Presentation className="h-4 w-4" />}
+                      {mode.key === 'presentation' && <Presentation className="h-3.5 w-3.5" />}
                       {mode.label}
                     </button>
                   ))}
@@ -297,7 +297,7 @@ export default function Home() {
               <button
                 onClick={() => handleAnalyze()}
                 disabled={!input.trim()}
-                className="shrink-0 rounded-xl bg-neutral-900 px-6 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
+                className="shrink-0 rounded-lg bg-neutral-900 px-5 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
               >
                 开始
               </button>
