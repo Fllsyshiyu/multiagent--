@@ -143,14 +143,14 @@ export default function Home() {
       <header className="sticky top-0 z-30 border-b border-neutral-100 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
           <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-[13px] font-bold text-white">M</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-[13px] font-bold text-white">A</span>
             <div>
-              <div className="text-[14px] font-bold leading-tight">MA-Collab</div>
-              <div className="text-[10.5px] leading-tight text-neutral-400">通用多智能体编排框架 v2.0</div>
+              <div className="text-[14px] font-bold leading-tight">ALLK Agora</div>
+              <div className="text-[10.5px] leading-tight text-neutral-400">通用多智能体编排框架</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Chip tone={llmConfig ? 'green' : 'gray'}>{llmConfig ? `Live · ${llmConfig.model}` : '回放模式（未配置 Key）'}</Chip>
+            <Chip tone={llmConfig ? 'green' : 'gray'}>{llmConfig ? `Live · ${llmConfig.model}` : '未配置Key'}</Chip>
             <button
               onClick={() => setShowApiPanel(true)}
               className="rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
@@ -191,18 +191,11 @@ export default function Home() {
         /* ====== 入口页 ====== */
         <main className="mx-auto max-w-3xl px-5 pb-24 pt-16 sm:pt-24">
           <div className="text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 px-3 py-1 text-[12px] text-neutral-500">
-              <span className="h-1.5 w-1.5 rounded-full bg-neutral-900" />
-              一句话入口 · 三轨道路由 · 20 项基础策略
-            </div>
-            <h1 className="mt-6 text-[34px] font-bold leading-tight tracking-tight sm:text-[44px]">
-              一套框架，
-              <br />
-              议事与博弈通用
+            <h1 className="mt-6 text-[52px] font-bold leading-tight tracking-tight sm:text-[66px]">
+              ALLK Agora
             </h1>
             <p className="mx-auto mt-4 max-w-xl text-[14.5px] leading-relaxed text-neutral-500">
-              输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告；
-              博弈游戏加载扩展复用同一套策略。不为任何场景手写代码。
+              输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告。不为任何场景手写代码。
             </p>
           </div>
 
@@ -408,20 +401,6 @@ export default function Home() {
                 </button>
               ))}
             </div>
-          </div>
-
-          {/* 框架说明 */}
-          <div className="mt-14 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {[
-              { t: '该不该协作有评分', d: 'Dispatcher 一次调用判断 agent_count 与 task_type，不是所有问题都启动多智能体' },
-              { t: '怎么协作有配方', d: '30 格决策表查得 A/B/C/D/E 策略组合，确定性规则 0 tokens' },
-              { t: '结论边界有记录', d: '保留证据缺口、少数意见、修订路径和真实授权边界' },
-            ].map((f) => (
-              <div key={f.t} className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
-                <div className="text-[13.5px] font-bold text-neutral-900">{f.t}</div>
-                <div className="mt-1 text-[12.5px] leading-relaxed text-neutral-500">{f.d}</div>
-              </div>
-            ))}
           </div>
 
           <footer className="mt-14 text-center text-[11.5px] leading-relaxed text-neutral-400">

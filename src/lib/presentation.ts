@@ -121,6 +121,7 @@ function itemLines(item: ReportItem): string[] {
 }
 
 function packParagraphs(paragraphs: string[], perLine: number): string[] {
+  if (!paragraphs.length) return ['暂无内容']
   const pages: string[][] = [[]]
   for (const paragraph of paragraphs) {
     const wrapped = wrapParagraph(paragraph, perLine)
@@ -131,9 +132,14 @@ function packParagraphs(paragraphs: string[], perLine: number): string[] {
       continue
     }
 
-    // 只有单个段落本身超过一页时才拆分，并尽量从新页开始。
-    if ((pages[pages.length - 1]?.length ?? 0) > 0) pages.push([])
+    // 单个段落超过一页：先填满当前页，剩余部分逐页拆分（避免产生空页）。
     let remaining = wrapped
+    const page = pages[pages.length - 1]
+    if (page.length) {
+      const canFit = CONTENT_MAX_LINES - page.length
+      page.push(...remaining.slice(0, canFit))
+      remaining = remaining.slice(canFit)
+    }
     while (remaining.length) {
       pages.push(remaining.slice(0, CONTENT_MAX_LINES))
       remaining = remaining.slice(CONTENT_MAX_LINES)
@@ -249,10 +255,11 @@ function addCoverSlide(pptx: PptxGenJS, report: DeliberationReport, accent: stri
     x: 0.9,
     y: 4.6,
     w: 11.4,
-    h: 1.25,
+    h: 1.4,
     fontFace: FONT,
     fontSize: 11,
     color: 'D1D5DB',
+    lineSpacing: 15,
     paraSpaceAfter: 4,
   })
   slide.addNotes(`议题：${cleanText(report.meta.issue)}\n任务类别：${cleanText(report.meta.categoryLabel)}\n终止状态：${report.meta.terminalState}`)
@@ -408,4 +415,98 @@ export function buildReportPresentation(report: DeliberationReport): PptxGenJS {
 export async function exportReportAsPptx(report: DeliberationReport): Promise<void> {
   const pptx = buildReportPresentation(report)
   await pptx.writeFile({ fileName: `${safeFileName(report.meta.title)}.pptx`, compression: true })
+}
+
+// ==================== AI 生成演示文稿（LLM 大纲 + 模板渲染） ====================
+
+/** AI 生成的一页幻灯片（结构受控，从源头杜绝文字溢出） */
+export interface AiSlide {
+  /** 标题（≤ 24 字，超长自动截断） */
+  title: string
+  /** 副标题（可选） */
+  subtitle?: string
+  /** 要点列表：3-6 条，每条 ≤ 40 个中文字符 */
+  bullets: string[]
+  /** 演讲备注（可选） */
+  notes?: string
+}
+
+/** 单页要点 → 行序列（前缀编号圆点） */
+function aiSlideLines(slide: AiSlide): string[] {
+  const lines: string[] = []
+  slide.bullets.forEach((bullet, index) => {
+    const text = cleanText(bullet)
+    if (!text) return
+    lines.push(`${String(index + 1).padStart(2, '0')}  ${text}`)
+  })
+  return lines
+}
+
+function addAiBodySlide(
+  pptx: PptxGenJS,
+  slide: AiSlide,
+  content: string,
+  partIndex: number,
+  partCount: number,
+  accent: string,
+): void {
+  const page = pptx.addSlide()
+  page.background = { color: PALETTE.canvas }
+  const pageTitle = truncateTitle(cleanText(slide.title) || '汇报内容', 24)
+  addHeader(page, partCount > 1 ? `${pageTitle} · ${partIndex + 1}/${partCount}` : pageTitle, accent)
+
+  let y = 1.5
+  if (slide.subtitle) {
+    page.addText(cleanText(slide.subtitle), {
+      x: 0.9,
+      y,
+      w: 11.5,
+      h: 0.34,
+      fontFace: FONT,
+      fontSize: 10.5,
+      color: PALETTE.muted,
+      lineSpacing: 13,
+      breakLine: true,
+    })
+    y = 1.95
+  }
+  page.addText(content, {
+    x: 0.9,
+    y,
+    w: 11.5,
+    h: 7.12 - y - 0.1,
+    fontFace: FONT,
+    fontSize: 13,
+    color: PALETTE.ink,
+    lineSpacing: 18,
+    paraSpaceAfter: 8,
+    breakLine: true,
+  })
+  addBrandFooter(page, accent)
+  page.addNotes(slide.notes ?? content)
+}
+
+/** 按 AI 生成的大纲渲染演示文稿：封面 + N 页正文（自动分页）+ 结语 */
+export function buildAiPresentation(report: DeliberationReport, slides: AiSlide[]): PptxGenJS {
+  const pptx = new PptxGenJS()
+  pptx.defineLayout({ name: 'DELIBERATION_WIDE', width: SLIDE_WIDTH, height: SLIDE_HEIGHT })
+  pptx.layout = 'DELIBERATION_WIDE'
+  const accent = accentFor(report.meta.category)
+  addCoverSlide(pptx, report, accent)
+
+  const perLine = charsPerLine(13)
+  slides.forEach((slide) => {
+    const wrapped = packParagraphs(aiSlideLines(slide), perLine)
+    wrapped.forEach((content, index) => {
+      addAiBodySlide(pptx, slide, content, index, wrapped.length, accent)
+    })
+  })
+
+  addClosingSlide(pptx, report, accent)
+  return pptx
+}
+
+export async function exportAiPptx(report: DeliberationReport, slides: AiSlide[]): Promise<void> {
+  const pptx = buildAiPresentation(report, slides)
+  await pptx.writeFile({ fileName: `${safeFileName(report.meta.title)}_AI.pptx`, compression: true })
 }

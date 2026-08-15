@@ -5,7 +5,10 @@ import {
   buildDeliberationReport, buildFullDeliberationReport, exportReportAsPdf, printReportAsPdf,
   type DeliberationReport, type ReportItem, type ReportSection,
 } from '../lib/report'
-import { exportReportAsPptx } from '../lib/presentation'
+import { exportAiPptx } from '../lib/presentation'
+import { generateAISlideOutline } from '../lib/ai-ppt'
+import { createLLMCaller } from '../engine/llm'
+import { activeLLMProfile, loadLLMSettings } from '../lib/llm-settings'
 
 function toneClass(tone?: ReportItem['tone']) {
   if (tone === 'success') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -138,17 +141,25 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
     }
   }
 
+  /** AI 生成 PPT：先用已配置的 LLM 生成受控大纲，再渲染导出，从源头杜绝文字溢出 */
   const handleExportPpt = async (kind: 'ppt-concise' | 'ppt-full') => {
     if (exporting) return
     const selectedReport = kind === 'ppt-full' ? fullReport : report
+    const profile = activeLLMProfile(loadLLMSettings())
+    if (!profile) {
+      setExportError('未配置 LLM API。请先在「设置」中填写 Base URL 与 API Key，再使用 AI 生成 PPT。')
+      return
+    }
     setExporting(kind)
     setExportError(null)
     try {
-      await exportReportAsPptx(selectedReport)
+      const caller = createLLMCaller(profile)
+      const slides = await generateAISlideOutline(selectedReport, caller)
+      await exportAiPptx(selectedReport, slides)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setExportError(message)
-      console.error('PPT 导出失败：', error)
+      console.error('AI PPT 导出失败：', error)
     } finally {
       setExporting(null)
     }
@@ -191,7 +202,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
               className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:border-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Presentation className="h-3.5 w-3.5" />
-              {exporting === 'ppt-concise' ? '生成中…' : '导出运行报告 PPT'}
+              {exporting === 'ppt-concise' ? 'AI 生成中…' : 'AI 生成运行报告 PPT'}
             </button>
             <button
               onClick={() => handleExportPpt('ppt-full')}
@@ -199,7 +210,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
               className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:border-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Presentation className="h-3.5 w-3.5" />
-              {exporting === 'ppt-full' ? '生成中…' : '导出完整审计 PPT'}
+              {exporting === 'ppt-full' ? 'AI 生成中…' : 'AI 生成完整审计 PPT'}
             </button>
             <button
               onClick={handlePrint}
@@ -215,7 +226,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
         </div>
         {exportError && (
           <div className="border-b border-red-100 bg-red-50 px-6 py-2.5 text-[12px] leading-relaxed text-red-600">
-            自动导出失败：{exportError}。可点击「打印」，在浏览器打印对话框中选择“另存为 PDF”。
+            自动导出失败：{exportError}。可点击「打印」，在浏览器打印对话框中选择"另存为 PDF"。
           </div>
         )}
         <ReportDocument report={report} containerRef={reportRef} />
