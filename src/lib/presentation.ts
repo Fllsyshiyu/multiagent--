@@ -44,8 +44,8 @@ function cleanText(value: string): string {
     .trim()
 }
 
-const CONTENT_CHARS_PER_LINE = 54
-const CONTENT_MAX_LINES = 11
+const CONTENT_CHARS_PER_LINE = 48
+const CONTENT_MAX_LINES = 9
 
 function wrapParagraph(value: string): string[] {
   if (!value) return ['']
@@ -80,20 +80,23 @@ function itemLines(item: ReportItem): string[] {
   return [`■ ${label}${value}`]
 }
 
-function packBlocks(blocks: string[][]): string[] {
+function packParagraphs(paragraphs: string[]): string[] {
   const pages: string[][] = [[]]
-  for (const sourceBlock of blocks) {
-    let block = sourceBlock.flatMap(wrapParagraph)
-    while (block.length) {
+  for (const paragraph of paragraphs) {
+    const wrapped = wrapParagraph(paragraph)
+    if (wrapped.length <= CONTENT_MAX_LINES) {
       const page = pages[pages.length - 1]
-      const capacity = CONTENT_MAX_LINES - page.length
-      if (capacity <= 0) {
-        pages.push([])
-        continue
-      }
-      page.push(...block.slice(0, capacity))
-      block = block.slice(capacity)
-      if (block.length) pages.push([])
+      if (page.length + wrapped.length > CONTENT_MAX_LINES) pages.push([])
+      pages[pages.length - 1].push(...wrapped)
+      continue
+    }
+
+    // 只有单个段落本身超过一页时才拆分，并尽量从新页开始。
+    if ((pages[pages.length - 1]?.length ?? 0) > 0) pages.push([])
+    let remaining = wrapped
+    while (remaining.length) {
+      pages.push(remaining.slice(0, CONTENT_MAX_LINES))
+      remaining = remaining.slice(CONTENT_MAX_LINES)
     }
   }
   return pages.map((lines) => lines.join('\n'))
@@ -101,22 +104,29 @@ function packBlocks(blocks: string[][]): string[] {
 
 function pageItems(items: ReportItem[]): string[] {
   if (!items.length) return ['暂无内容']
-  return packBlocks(items.map((item) => itemLines(item)))
+  return packParagraphs(items.flatMap((item) => itemLines(item)))
 }
 
 function pageAgenda(sections: DeliberationReport['sections']): string[] {
-  return packBlocks(sections.map((section, index) => [
+  return packParagraphs(sections.map((section, index) =>
     `${String(index + 1).padStart(2, '0')}  ${cleanText(section.title)}`,
-  ]))
+  ))
+}
+
+function titleFontSize(value: string, base: number): number {
+  const length = [...value].length
+  if (length > 30) return Math.max(14, base - 8)
+  if (length > 20) return Math.max(15, base - 5)
+  return base
 }
 
 function addBrandFooter(slide: PptxGenJS.Slide, accent: string) {
-  slide.addShape('rect', { x: 0.75, y: 7.04, w: 0.9, h: 0.035, fill: { color: accent } })
+  slide.addShape('rect', { x: 0.75, y: 7.12, w: 0.9, h: 0.03, fill: { color: accent } })
   slide.addText('MA-COLLAB · AI 议事汇报', {
     x: 0.75,
-    y: 7.05,
+    y: 7.15,
     w: 4.5,
-    h: 0.25,
+    h: 0.2,
     fontFace: FONT,
     fontSize: 8,
     color: PALETTE.faint,
@@ -126,17 +136,17 @@ function addBrandFooter(slide: PptxGenJS.Slide, accent: string) {
 function addHeader(slide: PptxGenJS.Slide, title: string, accent: string) {
   slide.addText(title, {
     x: 0.75,
-    y: 0.52,
+    y: 0.42,
     w: 10.8,
-    h: 0.82,
+    h: 0.68,
     fontFace: FONT,
-    fontSize: 20,
+    fontSize: titleFontSize(title, 20),
     bold: true,
     color: PALETTE.ink,
     breakLine: true,
     fit: 'shrink',
   })
-  slide.addShape('rect', { x: 0.78, y: 1.25, w: 0.9, h: 0.065, fill: { color: accent } })
+  slide.addShape('rect', { x: 0.78, y: 1.16, w: 0.9, h: 0.06, fill: { color: accent } })
   slide.addText('DELIBERATION REPORT', {
     x: 0.78,
     y: 0.35,
@@ -168,7 +178,7 @@ function addCoverSlide(pptx: PptxGenJS, report: DeliberationReport, accent: stri
     w: 11.4,
     h: 1.6,
     fontFace: FONT,
-    fontSize: 34,
+    fontSize: titleFontSize(cleanText(report.meta.title), 34),
     bold: true,
     color: PALETTE.white,
     fit: 'shrink',
@@ -208,14 +218,15 @@ function addAgendaSlide(pptx: PptxGenJS, content: string, partIndex: number, par
   slide.background = { color: PALETTE.canvas }
   addHeader(slide, partCount > 1 ? `议程 · ${partIndex + 1}/${partCount}` : '议程', accent)
   slide.addText(content.split('\n').map((text) => ({ text, options: { breakLine: true } })), {
-    x: 1,
-    y: 1.7,
-    w: 11.2,
-    h: 4.7,
+    x: 0.9,
+    y: 1.5,
+    w: 11.5,
+    h: 5.35,
     fontFace: FONT,
-    fontSize: 13,
+    fontSize: 12,
     color: PALETTE.ink,
-    paraSpaceAfter: 7,
+    lineSpacing: 17,
+    paraSpaceAfter: 3,
     fit: 'shrink',
   })
   addBrandFooter(slide, accent)
@@ -242,7 +253,7 @@ function addSectionDivider(pptx: PptxGenJS, index: number, section: Deliberation
     w: 8.5,
     h: 1.25,
     fontFace: FONT,
-    fontSize: 28,
+    fontSize: titleFontSize(cleanText(section.title), 24),
     bold: true,
     color: PALETTE.white,
     breakLine: true,
@@ -277,15 +288,15 @@ function addContentSlide(
   const suffix = partCount > 1 ? ` · ${partIndex + 1}/${partCount}` : ''
   addHeader(slide, `${cleanText(section.title)}${suffix}`, accent)
   slide.addText(content.split('\n').map((text) => ({ text, options: { breakLine: true } })), {
-    x: 1.0,
-    y: 1.75,
-    w: 11.2,
-    h: 4.7,
+    x: 0.9,
+    y: 1.5,
+    w: 11.5,
+    h: 5.35,
     fontFace: FONT,
-    fontSize: 12,
+    fontSize: 11.5,
     color: PALETTE.ink,
-    lineSpacing: 18,
-    paraSpaceAfter: 4,
+    lineSpacing: 16,
+    paraSpaceAfter: 3,
     breakLine: true,
     fit: 'shrink',
   })
