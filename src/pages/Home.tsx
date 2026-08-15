@@ -17,6 +17,23 @@ import {
   activeLLMProfile, clearLLMSettings, createLLMProfileId, EMPTY_LLM_SETTINGS, loadLLMSettings, saveLLMSettings,
 } from '../lib/llm-settings'
 
+function AgoraLogo() {
+  return (
+    <svg viewBox="0 0 144 96" role="img" aria-label="ALLK Agora 圆桌议事 Logo" className="h-[35.2px] w-[51.2px] shrink-0">
+      <circle cx="72" cy="17" r="10" fill="#2f2f2f" />
+      <path d="M58 47V40c0-8 6-14 14-14s14 6 14 14v7H58Z" fill="#2f2f2f" />
+      <circle cx="20" cy="35" r="8" fill="#8c8c8c" />
+      <circle cx="124" cy="35" r="8" fill="#8c8c8c" />
+      <path d="M4 54c3-7 12-13 24-16 7-2 14-3 21-4" fill="none" stroke="#8c8c8c" strokeWidth="5" strokeLinecap="round" />
+      <path d="M95 34c7 1 14 2 21 4 12 3 21 9 24 16" fill="none" stroke="#8c8c8c" strokeWidth="5" strokeLinecap="round" />
+      <path d="M4 53c2 16 22 28 52 32V72h32v13c30-4 50-16 52-32" fill="none" stroke="#3a3a3a" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="62" cy="61" r="2.8" fill="#555" />
+      <circle cx="72" cy="61" r="2.8" fill="#555" />
+      <circle cx="82" cy="61" r="2.8" fill="#555" />
+    </svg>
+  )
+}
+
 function resolveReplayScript(input: string, preset: Preset | null, hasLiveConfig: boolean) {
   if (hasLiveConfig) return null
   const normalized = input.trim()
@@ -141,19 +158,19 @@ export default function Home() {
     <div className="min-h-screen bg-white text-neutral-900">
       {/* 顶栏 */}
       <header className="sticky top-0 z-30 border-b border-neutral-100 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
-          <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-[13px] font-bold text-white">A</span>
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-6 py-3 sm:px-8">
+          <div className="flex items-center gap-2.5">
+            <AgoraLogo />
             <div>
-              <div className="text-[14px] font-bold leading-tight">ALLK Agora</div>
-              <div className="text-[10.5px] leading-tight text-neutral-400">通用多智能体编排框架</div>
+              <div className="text-[16px] font-bold leading-tight sm:text-[17px]">ALLK Agora</div>
+              <div className="mt-0.5 text-[11px] leading-tight text-neutral-400 sm:text-[11.5px]">通用多智能体编排框架</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Chip tone={llmConfig ? 'green' : 'gray'}>{llmConfig ? `Live · ${llmConfig.model}` : '未配置Key'}</Chip>
             <button
               onClick={() => setShowApiPanel(true)}
-              className="rounded-lg border border-neutral-200 px-3 py-1.5 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+              className="rounded-xl border border-neutral-200 px-3.5 py-2 text-[13px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
             >
               {llmConfig ? 'API 配置' : '填入 API Key'}
             </button>
@@ -189,46 +206,21 @@ export default function Home() {
 
       {!started ? (
         /* ====== 入口页 ====== */
-        <main className="mx-auto max-w-3xl px-5 pb-24 pt-16 sm:pt-24">
+        <main className="mx-auto max-w-5xl px-5 pb-24 pt-14 sm:px-7 sm:pt-24">
           <div className="text-center">
-            <h1 className="mt-6 text-[52px] font-bold leading-tight tracking-tight sm:text-[66px]">
+            <h1 className="text-[clamp(128px,14vw,224px)] font-bold leading-[0.98] tracking-[-0.045em]">
               ALLK Agora
             </h1>
-            <p className="mx-auto mt-4 max-w-xl text-[14.5px] leading-relaxed text-neutral-500">
+            <p className="mx-auto mt-7 max-w-3xl text-[10.85px] leading-[1.75] text-neutral-500 sm:text-[11.9px]">
               输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告。不为任何场景手写代码。
             </p>
           </div>
 
-          {/* 交付物模式：显式选择，避免依赖提示词关键词 */}
-          <div className="mt-6 flex flex-col items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-widest text-neutral-400">任务交付</span>
-            <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
-              {([
-                { key: 'text' as const, label: '普通任务' },
-                { key: 'presentation' as const, label: '生成 PPT' },
-              ]).map((mode) => (
-                <button
-                  key={mode.key}
-                  onClick={() => selectDeliverable(mode.key)}
-                  className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-[12.5px] font-medium transition-all ${
-                    deliverable === mode.key ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
-                  }`}
-                >
-                  {mode.key === 'presentation' && <Presentation className="h-3.5 w-3.5" />}
-                  {mode.label}
-                </button>
-              ))}
-            </div>
-            <span className="text-[11px] text-neutral-400">
-              {deliverable === 'presentation' ? '固定进入 5-Agent PPT 生产流水线，最终交付可编辑 PPTX' : '沿用单 Agent、协作议事与博弈的自动路由'}
-            </span>
-          </div>
-
           {/* 议事模式选择器 */}
           {llmConfig && deliverable === 'text' && (
-            <div className="mt-6 flex flex-col items-center gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-widest text-neutral-400">议事模式</span>
-              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
+            <div className="mt-8 flex flex-col items-center gap-2.5">
+              <span className="text-[12px] font-medium uppercase tracking-widest text-neutral-400">议事模式</span>
+              <div className="inline-flex rounded-xl border border-neutral-200 bg-neutral-50 p-0.5">
                 {([
                   { key: 'auto' as const, label: 'Auto · 智能识别' },
                   { key: 'single' as const, label: '单 Agent' },
@@ -237,7 +229,7 @@ export default function Home() {
                   <button
                     key={m.key}
                     onClick={() => setDelibMode(m.key)}
-                    className={`rounded-md px-4 py-1.5 text-[12.5px] font-medium transition-all ${
+                    className={`rounded-lg px-5 py-2 text-[13.5px] font-medium transition-all ${
                       delibMode === m.key
                         ? 'bg-white text-neutral-900 shadow-sm'
                         : 'text-neutral-500 hover:text-neutral-700'
@@ -247,14 +239,14 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              <span className="text-[11px] text-neutral-400">
+              <span className="text-[12px] text-neutral-400">
                 {delibMode === 'auto' ? 'Dispatcher 自动判别任务类型' : delibMode === 'single' ? '强制使用单 Agent 直接回答' : '强制启动多 Agent 协作议事'}
               </span>
             </div>
           )}
 
           {/* 输入框 */}
-          <div className="mt-10 rounded-2xl border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
+          <div className="mt-10 rounded-[22px] border border-neutral-300 bg-white shadow-sm transition-shadow focus-within:shadow-md">
             <textarea
               value={input}
               onChange={(e) => {
@@ -263,11 +255,11 @@ export default function Home() {
               }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAnalyze() } }}
               placeholder={deliverable === 'presentation' ? '描述主题、受众、页数和用途，例如：基于附件制作一份面向管理层的 10 页项目汇报 PPT' : '例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…'}
-              rows={3}
-              className="w-full resize-none rounded-2xl bg-transparent px-5 pt-4 text-[15px] leading-relaxed outline-none placeholder:text-neutral-400"
+              rows={4}
+              className="w-full resize-none rounded-[22px] bg-transparent px-7 pt-5 text-[16px] leading-relaxed outline-none placeholder:text-neutral-400 sm:text-[17px]"
             />
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pb-3">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -279,19 +271,33 @@ export default function Home() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-neutral-200 px-4 py-2.5 text-[13.5px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Paperclip className="h-3.5 w-3.5" />
-                  {uploading ? '解析中…' : `上传附件（最多 ${MAX_ATTACHMENT_COUNT} 个）`}
+                  <Paperclip className="h-4 w-4" />
+                  {uploading ? '解析中…' : '上传附件'}
                 </button>
-                <span className="truncate text-[12px] text-neutral-400">
-                  {llmConfig ? `将使用 ${llmConfig.model} 实时编排` : '未配置 Key · 预设回放 / 内置博弈离线运行'}
-                </span>
+                <div className="inline-flex rounded-xl border border-neutral-200 bg-neutral-50 p-0.5" role="group" aria-label="任务交付模式">
+                  {([
+                    { key: 'text' as const, label: '普通任务' },
+                    { key: 'presentation' as const, label: '生成 PPT' },
+                  ]).map((mode) => (
+                    <button
+                      key={mode.key}
+                      onClick={() => selectDeliverable(mode.key)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium transition-all ${
+                        deliverable === mode.key ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+                      }`}
+                    >
+                      {mode.key === 'presentation' && <Presentation className="h-4 w-4" />}
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <button
                 onClick={() => handleAnalyze()}
                 disabled={!input.trim()}
-                className="shrink-0 rounded-xl bg-neutral-900 px-5 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
+                className="shrink-0 rounded-xl bg-neutral-900 px-6 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200"
               >
                 开始
               </button>
@@ -381,29 +387,29 @@ export default function Home() {
           )}
 
           {/* 预设场景 */}
-          <div className="mt-8">
-            <div className="mb-3 text-center text-[12px] font-medium uppercase tracking-widest text-neutral-400">预设演示场景 · 覆盖三条轨道</div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <div className="mt-10">
+            <div className="mb-4 text-center text-[13px] font-medium uppercase tracking-widest text-neutral-400">预设演示场景 · 覆盖三条轨道</div>
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
               {PRESETS.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => handlePreset(p)}
-                  className="group rounded-xl border border-neutral-200 bg-white p-4 text-left transition-all hover:border-neutral-900 hover:shadow-sm"
+                  className="group rounded-2xl border border-neutral-200 bg-white p-5 text-left transition-all hover:border-neutral-900 hover:shadow-sm"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[14px] font-semibold text-neutral-900">{p.label}</span>
+                    <span className="text-[15.5px] font-semibold text-neutral-900">{p.label}</span>
                     <Chip tone={p.track_hint === 'collaborative' ? 'black' : 'gray'}>
                       {p.track_hint === 'collaborative' ? '协作' : p.track_hint === 'competitive' ? '博弈' : '单 Agent'}
                     </Chip>
                   </div>
-                  <div className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-neutral-500">{p.input}</div>
-                  <div className="mt-2 text-[11.5px] text-neutral-400">{p.description}</div>
+                  <div className="mt-1.5 line-clamp-2 text-[14px] leading-relaxed text-neutral-500">{p.input}</div>
+                  <div className="mt-2.5 text-[12.5px] text-neutral-400">{p.description}</div>
                 </button>
               ))}
             </div>
           </div>
 
-          <footer className="mt-14 text-center text-[11.5px] leading-relaxed text-neutral-400">
+          <footer className="mt-14 text-center text-[12.5px] leading-relaxed text-neutral-400">
             Live 模式下 API Key 仅保存在当前浏览器标签会话，只发往你选择的 LLM 服务商，不经过本项目服务器。
             <br />AI 议事结果仅用于辅助分析，不替代真实公共决策与实地调研。
           </footer>
