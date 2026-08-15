@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState, type RefObject } from 'react'
-import { Download, X } from 'lucide-react'
+import { Download, Presentation, X } from 'lucide-react'
 import type { RunState } from '../hooks/useRunEngine'
 import {
   buildDeliberationReport, buildFullDeliberationReport, exportReportAsPdf, printReportAsPdf,
   type DeliberationReport, type ReportItem, type ReportSection,
 } from '../lib/report'
+import { exportReportAsPptx } from '../lib/presentation'
 
 function toneClass(tone?: ReportItem['tone']) {
   if (tone === 'success') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -100,7 +101,7 @@ function ReportDocument({ report, containerRef }: { report: DeliberationReport; 
 export function ReportPanel({ state, onClose }: { state: RunState; onClose: () => void }) {
   const reportRef = useRef<HTMLDivElement>(null)
   const fullReportRef = useRef<HTMLDivElement>(null)
-  const [exporting, setExporting] = useState<'concise' | 'full' | 'print' | null>(null)
+  const [exporting, setExporting] = useState<'concise' | 'full' | 'ppt-concise' | 'ppt-full' | 'print' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
   const report = useMemo(() => buildDeliberationReport(state), [state])
   const fullReport = useMemo(() => buildFullDeliberationReport(state), [state])
@@ -137,13 +138,29 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
     }
   }
 
+  const handleExportPpt = async (kind: 'ppt-concise' | 'ppt-full') => {
+    if (exporting) return
+    const selectedReport = kind === 'ppt-full' ? fullReport : report
+    setExporting(kind)
+    setExportError(null)
+    try {
+      await exportReportAsPptx(selectedReport)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setExportError(message)
+      console.error('PPT 导出失败：', error)
+    } finally {
+      setExporting(null)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/40 p-4" onClick={onClose}>
       <div
         className="mx-auto my-6 w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-100 bg-white/95 px-6 py-4 backdrop-blur">
+        <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 bg-white/95 px-6 py-4 backdrop-blur">
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-[17px] font-bold text-neutral-900">{report.meta.title}</h2>
@@ -167,6 +184,22 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
             >
               <Download className="h-3.5 w-3.5" />
               {exporting === 'full' ? '导出中…' : '导出完整报告'}
+            </button>
+            <button
+              onClick={() => handleExportPpt('ppt-concise')}
+              disabled={Boolean(exporting)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:border-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Presentation className="h-3.5 w-3.5" />
+              {exporting === 'ppt-concise' ? '生成中…' : '导出 PPT'}
+            </button>
+            <button
+              onClick={() => handleExportPpt('ppt-full')}
+              disabled={Boolean(exporting)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:border-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Presentation className="h-3.5 w-3.5" />
+              {exporting === 'ppt-full' ? '生成中…' : '完整 PPT'}
             </button>
             <button
               onClick={handlePrint}
