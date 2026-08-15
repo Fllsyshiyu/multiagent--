@@ -208,10 +208,10 @@ export default function Home() {
         /* ====== 入口页 ====== */
         <main className="mx-auto max-w-3xl px-5 pb-24 pt-16 sm:pt-24">
           <div className="text-center">
-            <h1 className="mt-6 text-[34px] font-bold leading-tight tracking-tight sm:text-[44px]">
+            <h1 className="mt-6 text-[68px] font-bold leading-tight tracking-tight sm:text-[88px]">
               ALLK Agora
             </h1>
-            <p className="mx-auto mt-4 max-w-xl text-[14.5px] leading-relaxed text-neutral-500">
+            <p className="mx-auto mt-4 max-w-xl text-[10.875px] leading-relaxed text-neutral-500">
               输入任何一句话：简单任务单 Agent 直接回答；多方争议编译成两阶段鱼缸议事并形成可追踪报告。不为任何场景手写代码。
             </p>
           </div>
