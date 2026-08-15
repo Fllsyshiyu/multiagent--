@@ -19,6 +19,11 @@ import { AVALON_SPEC, CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, UNDER
 import { parseGameRequest } from '../src/engine/game-request'
 import { createReplayCaller, offlineProfile } from '../src/engine/replay'
 import { buildReportPresentation } from '../src/lib/presentation'
+import { buildPresentationDeck } from '../src/lib/presentation-production'
+import { compilePresentationScenario } from '../src/engine/presentation/compiler'
+import { dispatch, isPresentationProductionRequest } from '../src/engine/dispatcher'
+import { PresentationProductionEngine } from '../src/engine/presentation/engine'
+import { InvocationAudit } from '../src/engine/framework/audit'
 
 function testPhase(input: Partial<Phase> & Pick<Phase, 'id' | 'kind'>): Phase {
   const policy = input.policy ?? { A: 'A1', B: 'B2', C: 'C1', D: 'D1', E: 'E1' }
@@ -357,6 +362,84 @@ export async function run() {
   })
   const presentationBuffer = await samplePresentation.write({ outputType: 'arraybuffer' })
   assert.ok(presentationBuffer.byteLength > 5000)
+
+  assert.equal(isPresentationProductionRequest('请基于附件制作一份 10 页汇报 PPT'), true)
+  assert.equal(isPresentationProductionRequest('请分析这份已有 PPT 的问题'), false)
+  const forcedPresentation = await dispatch(createReplayCaller('请给出地下车库管理方案'), '请给出地下车库管理方案', undefined, 'auto', 'presentation')
+  assert.equal(forcedPresentation.profile.deliverable, 'presentation')
+  assert.equal(forcedPresentation.profile.task_type, 'collaborative')
+  assert.equal(forcedPresentation.profile.agent_count, 5)
+  const presentationProfile = offlineProfile('请基于附件制作一份 8 页汇报 PPT')
+  assert.equal(presentationProfile.deliverable, 'presentation')
+  const presentationConfig = await compilePresentationScenario(
+    '请基于附件制作一份 8 页汇报 PPT', presentationProfile, () => {}, '附件示例：项目计划分为调研、试点和复盘三步。',
+  )
+  assert.equal(presentationConfig.agents.length, 5)
+  assert.equal(presentationConfig.phases.length, 7)
+  assert.equal(presentationConfig.presentation_brief?.slide_count, 8)
+  const pipelineEvents: import('../src/engine/types').EngineEvent[] = []
+  const presentationMockCaller: import('../src/engine/llm').LLMCaller = async () => ({
+    text: '{}', tokens: 64, invocation: { mode: 'mock', model: 'presentation-mock', latency_ms: 0, result_status: 'success' },
+  })
+  const presentationEngine = new PresentationProductionEngine(presentationMockCaller, (event) => pipelineEvents.push(event), { invocationAudit: new InvocationAudit() })
+  await presentationEngine.run(presentationConfig)
+  assert.equal(pipelineEvents.filter((event) => event.t === 'phase_start').length, 7)
+  assert.equal(pipelineEvents.filter((event) => event.t === 'checkpoint_created').length, 7)
+  assert.ok(pipelineEvents.some((event) => event.t === 'artifact' && event.artifact.kind === 'PresentationDeck'))
+  assert.ok(pipelineEvents.some((event) => event.t === 'run_done'))
+
+  const longProfile = offlineProfile('请制作一份 12 页汇报 PPT')
+  const longConfig = await compilePresentationScenario('请制作一份 12 页汇报 PPT', longProfile, () => {})
+  const longEvents: import('../src/engine/types').EngineEvent[] = []
+  const observedBudgets: number[] = []
+  const truncatedRevisionCaller: import('../src/engine/llm').LLMCaller = async (system, _user, options) => {
+    if (/生成逐页 slides/.test(system)) observedBudgets.push(options?.max_tokens ?? 0)
+    if (/只返回需要修改的页面/.test(system)) {
+      observedBudgets.push(options?.max_tokens ?? 0)
+      return { text: '{"modified_slides":[', tokens: 4096, finish_reason: 'length', invocation: { mode: 'mock', model: 'truncated-mock', latency_ms: 0, result_status: 'success' } }
+    }
+    if (/独立演示审校 Agent/.test(system)) {
+      return { text: JSON.stringify({ passed: false, score: 70, strengths: ['结构完整'], issues: ['个别页面需精简'], revision_instructions: ['精简 S3'] }), tokens: 128, invocation: { mode: 'mock', model: 'review-mock', latency_ms: 0, result_status: 'success' } }
+    }
+    return { text: '{}', tokens: 64, invocation: { mode: 'mock', model: 'presentation-mock', latency_ms: 0, result_status: 'success' } }
+  }
+  await new PresentationProductionEngine(truncatedRevisionCaller, (event) => longEvents.push(event), { invocationAudit: new InvocationAudit() }).run(longConfig)
+  const longDeckEvent = longEvents.find((event) => event.t === 'artifact' && event.artifact.kind === 'PresentationDeck')
+  assert.ok(longDeckEvent?.t === 'artifact' && longDeckEvent.artifact.kind === 'PresentationDeck')
+  assert.equal(longDeckEvent?.t === 'artifact' && longDeckEvent.artifact.kind === 'PresentationDeck' ? longDeckEvent.artifact.slides.length : 0, 12)
+  assert.ok(longEvents.some((event) => event.t === 'adaptation' && /保留已生成的初版/.test(event.action)))
+  assert.ok(longEvents.some((event) => event.t === 'run_done'))
+  assert.ok(observedBudgets.includes(8192))
+  assert.ok(observedBudgets.includes(4096))
+
+  const maxConfig = await compilePresentationScenario('请制作一份 20 页汇报 PPT', offlineProfile('请制作一份 20 页汇报 PPT'), () => {})
+  const maxEvents: import('../src/engine/types').EngineEvent[] = []
+  await new PresentationProductionEngine(presentationMockCaller, (event) => maxEvents.push(event), { invocationAudit: new InvocationAudit() }).run(maxConfig)
+  const maxDeckEvent = maxEvents.find((event) => event.t === 'artifact' && event.artifact.kind === 'PresentationDeck')
+  assert.equal(maxDeckEvent?.t === 'artifact' && maxDeckEvent.artifact.kind === 'PresentationDeck' ? maxDeckEvent.artifact.slides.length : 0, 20)
+  if (maxDeckEvent?.t === 'artifact' && maxDeckEvent.artifact.kind === 'PresentationDeck') {
+    const maxDeck = buildPresentationDeck(maxDeckEvent.artifact)
+    const maxDeckBuffer = await maxDeck.write({ outputType: 'arraybuffer' })
+    assert.ok(maxDeckBuffer.byteLength > 20000)
+    await maxDeck.writeFile({ fileName: 'node_modules/.tmp/presentation-20-preview.pptx', compression: true })
+  }
+  const editableDeck = buildPresentationDeck({
+    kind: 'PresentationDeck', title: '项目汇报', subtitle: '多智能体协作生成', brief: presentationConfig.presentation_brief!,
+    slides: [
+      { slide_id: 'S1', type: 'cover', title: '项目汇报', subtitle: '多智能体协作生成', key_message: '从资料到可执行方案', bullets: [], source_refs: [], speaker_notes: '开场。' },
+      { slide_id: 'S2', type: 'agenda', title: '议程', key_message: '三部分', bullets: ['背景', '路径', '下一步'], source_refs: [], speaker_notes: '介绍议程。' },
+      { slide_id: 'S3', type: 'key_message', title: '背景与目标', key_message: '先明确目标', bullets: ['用户目标', '受众需求'], source_refs: ['E1'], speaker_notes: '说明目标。' },
+      { slide_id: 'S4', type: 'comparison', title: '方案比较', key_message: '比较不同路径', bullets: [], columns: [{ title: '方案 A', points: ['速度快'] }, { title: '方案 B', points: ['风险低'] }], source_refs: ['E1'], speaker_notes: '比较方案。' },
+      { slide_id: 'S5', type: 'process', title: '实施路径', key_message: '分阶段推进', bullets: [], steps: [{ title: '调研', detail: '确认事实' }, { title: '试点', detail: '验证假设' }, { title: '复盘', detail: '评估效果' }], source_refs: ['E1'], speaker_notes: '说明步骤。' },
+      { slide_id: 'S6', type: 'evidence', title: '证据边界', key_message: '区分事实和缺口', bullets: ['附件事实', '待核验数据'], source_refs: ['E1'], speaker_notes: '说明边界。' },
+      { slide_id: 'S7', type: 'key_message', title: '风险控制', key_message: '保留退出机制', bullets: ['设置检查点', '记录异常'], source_refs: [], speaker_notes: '说明风险。' },
+      { slide_id: 'S8', type: 'conclusion', title: '结论与下一步', key_message: '完成核验后进入试点', bullets: ['补齐证据', '启动试点'], source_refs: [], speaker_notes: '收束。' },
+    ],
+    sources: [{ id: 'E1', label: '用户附件', verified: true }], qa: { passed: true, checks: ['结构完整'], warnings: [] },
+  })
+  const editableBuffer = await editableDeck.write({ outputType: 'arraybuffer' })
+  assert.ok(editableBuffer.byteLength > 10000)
+  await editableDeck.writeFile({ fileName: 'node_modules/.tmp/presentation-preview.pptx', compression: true })
 
   console.log('engine framework self-tests passed')
 }

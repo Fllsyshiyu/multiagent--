@@ -1,6 +1,7 @@
 import type { LLMCaller } from './llm'
 import type { TaskProfile } from './types'
 import { parseGameRequest } from './game-request'
+import { isPresentationProductionRequest } from './dispatcher'
 import { createScriptedCaller, type ScriptData } from './scripted'
 
 interface ReplayGameContext {
@@ -44,6 +45,22 @@ export function offlineProfile(userInput: string): TaskProfile {
       reasoning: `离线规则识别：${request.gameType}${request.playerCount ? `，${request.playerCount} 名玩家` : ''}`,
     }
   }
+  if (isPresentationProductionRequest(userInput)) {
+    return {
+      agent_count: 5,
+      task_type: 'collaborative',
+      game_type: null,
+      deliverable: 'presentation',
+      domain: 'presentation',
+      time_pressure: 'relaxed',
+      information_asymmetry: 'medium',
+      agent_relations: 'cooperative',
+      decision_pattern: 'sequential',
+      resource_scarcity: 'low',
+      verifiability: 'partially',
+      reasoning: '离线规则识别为多 Agent 演示文稿生产任务。',
+    }
+  }
   return {
     agent_count: 1,
     task_type: 'single',
@@ -56,6 +73,7 @@ export function offlineProfile(userInput: string): TaskProfile {
     resource_scarcity: 'low',
     verifiability: 'subjective',
     reasoning: '离线模式未识别到可离线运行的任务；使用单 Agent 提示用户配置 Live 模式。',
+    deliverable: 'text',
   }
 }
 

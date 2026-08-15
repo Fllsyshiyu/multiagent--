@@ -9,13 +9,15 @@ import { GAME_REGISTRY } from './game-specs'
 import { GenericGameEngine, generateGameSpec, searchGameRules } from './game-engine'
 import { TokenLedger } from './ledger'
 import type { LLMCaller } from './llm'
-import type { ForceTrack, ModelInvocation, ScenarioConfig, TaskProfile } from './types'
+import type { ForceDeliverable, ForceTrack, ModelInvocation, ScenarioConfig, TaskProfile } from './types'
 import type { ComplexityClassification, ComplexityResult, ComplexityLevel, ComplexityDimensions, DimensionScore } from '../complexity'
 import { classifyComplexity } from '../complexity'
 import { InvocationAudit } from './framework/audit'
 import { createTerminalReport } from './framework/events'
 import { attachmentContext, type Attachment } from '../lib/attachments'
 import { resolveGameType } from './game-request'
+import { compilePresentationScenario } from './presentation/compiler'
+import { PresentationProductionEngine } from './presentation/engine'
 
 /** Complexity API 不可用时的保守降级值 */
 function emptyComplexity(): ComplexityClassification {
@@ -55,6 +57,7 @@ export async function analyzeInput(
   emit: Emit,
   forceTrack?: ForceTrack,
   attachments: Attachment[] = [],
+  forceDeliverable?: ForceDeliverable,
 ): Promise<{ profile: TaskProfile; config?: ScenarioConfig }> {
   const ledger = new TokenLedger()
   const invocationAudit = new InvocationAudit()
@@ -68,9 +71,21 @@ export async function analyzeInput(
   const { profile, tokens } = await dispatch(auditedCaller, userInput, (n) =>
     emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
     forceTrack,
+    forceDeliverable,
   )
   ledger.record(tokens)
   emit({ t: 'dispatch_done', profile, tokens })
+  if (profile.deliverable === 'presentation') {
+    emit({ t: 'track_decided', track: 'collaborative', reason: '识别为演示文稿交付物 → 启动独立的多 Agent PPT 生产流水线' })
+    const config = await compilePresentationScenario(
+      userInput, profile,
+      (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
+      attachmentContext(attachments),
+    )
+    emit({ t: 'compile_done', config })
+    emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
+    return { profile: config.profile, config }
+  }
   if (profile.task_type === 'single' || profile.agent_count <= 1) {
     emit({ t: 'track_decided', track: 'single', reason: forceTrack === 'single' ? '用户选择单 Agent 模式' : 'agent_count=1' })
     emit({ t: 'audit_snapshot', model_invocations: invocationAudit.snapshot() })
@@ -105,7 +120,7 @@ export async function runInput(
   userInput: string,
   caller: LLMCaller,
   emit: Emit,
-  options: { forceTrack?: ForceTrack; prepared?: PreparedRun; callerForAgent?: (agentId?: string) => LLMCaller | undefined; attachments?: Attachment[] } = {},
+  options: { forceTrack?: ForceTrack; forceDeliverable?: ForceDeliverable; prepared?: PreparedRun; callerForAgent?: (agentId?: string) => LLMCaller | undefined; attachments?: Attachment[] } = {},
 ): Promise<void> {
   const ledger = new TokenLedger()
   const invocationAudit = new InvocationAudit(options.prepared?.modelInvocations)
@@ -122,10 +137,28 @@ export async function runInput(
     : await dispatch(auditedCaller, userInput, (n) =>
       emit({ t: 'retry', reason: 'Dispatcher 分类 JSON 解析失败，自动重试', attempt: n }),
       options.forceTrack,
+      options.forceDeliverable,
     )
   const { profile, tokens } = dispatched
   ledger.record(tokens)
   emit({ t: 'dispatch_done', profile, tokens })
+
+  // ---- 演示文稿能力模块：独立流水线，不改变原三轨道执行器 ----
+  if (profile.deliverable === 'presentation') {
+    emit({ t: 'track_decided', track: 'collaborative', reason: '演示文稿任务 → 资料规划、证据提炼、叙事设计、SlideSpec、独立审校与 PPTX 交付' })
+    const config = options.prepared?.config ?? await compilePresentationScenario(
+      userInput, profile,
+      (step, name, detail, tk) => emit({ t: 'compile_step', step, name, detail, tokens: tk }),
+      attachmentContext(options.attachments ?? []),
+    )
+    if (options.prepared?.config) {
+      emit({ t: 'compile_step', step: 5, name: '复用已确认配置', detail: '复用演示任务分析阶段的专业 Agent Pool 与流水线配置', tokens: 0 })
+    }
+    emit({ t: 'compile_done', config })
+    const presentation = new PresentationProductionEngine(caller, emit, { invocationAudit, callerForAgent: options.callerForAgent })
+    await presentation.run(config)
+    return
+  }
 
   // ---- 轨道一：单 Agent 直接回答（跳过编排） ----
   if (profile.task_type === 'single' || profile.agent_count <= 1) {

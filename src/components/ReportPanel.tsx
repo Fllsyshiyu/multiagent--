@@ -191,7 +191,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
               className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:border-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Presentation className="h-3.5 w-3.5" />
-              {exporting === 'ppt-concise' ? '生成中…' : '导出 PPT'}
+              {exporting === 'ppt-concise' ? '生成中…' : '导出运行报告 PPT'}
             </button>
             <button
               onClick={() => handleExportPpt('ppt-full')}
@@ -199,7 +199,7 @@ export function ReportPanel({ state, onClose }: { state: RunState; onClose: () =
               className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-[12.5px] font-medium text-neutral-700 transition-colors hover:border-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Presentation className="h-3.5 w-3.5" />
-              {exporting === 'ppt-full' ? '生成中…' : '完整 PPT'}
+              {exporting === 'ppt-full' ? '生成中…' : '导出完整审计 PPT'}
             </button>
             <button
               onClick={handlePrint}

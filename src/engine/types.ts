@@ -28,6 +28,8 @@ export interface TaskProfile {
   resource_scarcity: Scarcity
   verifiability: Verifiability
   reasoning: string // Dispatcher 的分类理由（展示用）
+  /** 最终交付物。缺省等同于 text，保持旧配置与回放脚本兼容。 */
+  deliverable?: 'text' | 'presentation'
 }
 
 // ============ 最终框架 · 五维 20 项 Base Strategy ============
@@ -467,6 +469,8 @@ export interface ScenarioConfig {
   case_context: string
   hard_constraints: string[]
   exam_blueprint?: ExamBlueprint
+  /** 仅在首页“协作生成 PPT”任务中存在；普通议事配置不受影响。 */
+  presentation_brief?: PresentationBrief
 }
 
 // ============ 协作轨道工件 ============
@@ -559,6 +563,80 @@ export interface FinalProposal {
   exit_mechanism: string
   review_mechanism: string
   revision_path: string[] // 方案如何由异议逐步修改而来
+}
+
+// ============ 演示文稿生产扩展工件 ============
+
+export interface PresentationBrief {
+  kind: 'PresentationBrief'
+  title: string
+  objective: string
+  audience: string
+  purpose: string
+  language: string
+  tone: string
+  slide_count: number
+  constraints: string[]
+}
+
+export interface PresentationResearchPlan {
+  kind: 'PresentationResearchPlan'
+  questions: string[]
+  evidence_requirements: string[]
+  assignments: { agent_id: string; task: string }[]
+  limitations: string[]
+}
+
+export interface PresentationEvidenceCard {
+  kind: 'PresentationEvidenceCard'
+  evidence_id: string
+  claim: string
+  summary: string
+  source_type: 'attachment' | 'user_input' | 'model_background' | 'evidence_gap'
+  source_ref: string
+  confidence: 'high' | 'medium' | 'low'
+  verified: boolean
+}
+
+export interface PresentationOutline {
+  kind: 'PresentationOutline'
+  thesis: string
+  storyline: string
+  sections: { title: string; purpose: string; key_message: string; evidence_refs: string[] }[]
+}
+
+export type PresentationSlideType = 'cover' | 'agenda' | 'key_message' | 'comparison' | 'timeline' | 'process' | 'evidence' | 'conclusion'
+
+export interface PresentationSlideSpec {
+  slide_id: string
+  type: PresentationSlideType
+  title: string
+  subtitle?: string
+  key_message: string
+  bullets: string[]
+  columns?: { title: string; points: string[] }[]
+  steps?: { title: string; detail: string }[]
+  source_refs: string[]
+  speaker_notes: string
+}
+
+export interface PresentationDeck {
+  kind: 'PresentationDeck'
+  title: string
+  subtitle: string
+  brief: PresentationBrief
+  slides: PresentationSlideSpec[]
+  sources: { id: string; label: string; verified: boolean }[]
+  qa: { passed: boolean; checks: string[]; warnings: string[] }
+}
+
+export interface PresentationDeckReview {
+  kind: 'PresentationDeckReview'
+  passed: boolean
+  score: number
+  strengths: string[]
+  issues: string[]
+  revision_instructions: string[]
 }
 
 // ============ 试卷评估 ============
@@ -704,10 +782,17 @@ export type Artifact =
   | FinalProposal
   | ExamBlueprint
   | ExamResult
+  | PresentationBrief
+  | PresentationResearchPlan
+  | PresentationEvidenceCard
+  | PresentationOutline
+  | PresentationDeck
+  | PresentationDeckReview
 
 // ============ LLM 配置 ============
 
 export type ForceTrack = 'auto' | 'single' | 'multi'
+export type ForceDeliverable = 'text' | 'presentation'
 
 export interface LLMConfig {
   base_url: string

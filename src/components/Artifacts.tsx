@@ -1,9 +1,12 @@
 /**
  * 工件渲染器 · 把结构化工件渲染成卡片（议事过程的核心可视化）
  */
+import { useState } from 'react'
+import { Download } from 'lucide-react'
 import type {
   Artifact, CandidateProposal, ConflictMap, FinalProposal, FishbowlSummaryCard,
   InitialAssessmentCard, ObjectionCard, OuterObservationCard, PlanScoreCard, ScenarioConfig,
+  PresentationBrief, PresentationDeck, PresentationDeckReview, PresentationEvidenceCard, PresentationOutline, PresentationResearchPlan,
 } from '../engine/types'
 import { Chip, TokenBadge } from './common'
 
@@ -268,6 +271,113 @@ export function FinalProposalView({ p }: { p: FinalProposal }) {
   )
 }
 
+function PresentationBriefView({ brief }: { brief: PresentationBrief }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="flex items-center gap-2"><Chip tone="black">Presentation Brief</Chip><Chip>{brief.slide_count} 页</Chip><Chip>{brief.language}</Chip></div>
+      <div className="mt-2 text-[15px] font-bold text-neutral-900">{brief.title}</div>
+      <div className="mt-1 text-[13px] leading-relaxed text-neutral-600">{brief.purpose}</div>
+      <div className="mt-3 grid grid-cols-1 gap-2 text-[12.5px] text-neutral-600 sm:grid-cols-2">
+        <div><span className="font-medium text-neutral-900">受众：</span>{brief.audience}</div>
+        <div><span className="font-medium text-neutral-900">语气：</span>{brief.tone}</div>
+      </div>
+    </div>
+  )
+}
+
+function ResearchPlanView({ plan }: { plan: PresentationResearchPlan }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="flex items-center gap-2"><Chip tone="black">资料任务规划</Chip><Chip>{plan.questions.length} 个研究问题</Chip></div>
+      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div><div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-neutral-400">研究问题</div><List items={plan.questions} /></div>
+        <div><div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-600">能力边界</div><List items={plan.limitations} tone="text-amber-800" /></div>
+      </div>
+    </div>
+  )
+}
+
+function EvidenceCardView({ card }: { card: PresentationEvidenceCard }) {
+  const tone = card.verified ? 'green' : card.source_type === 'evidence_gap' ? 'amber' : 'gray'
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="flex flex-wrap items-center gap-2"><Chip tone={tone}>{card.verified ? '已核验输入' : card.source_type === 'evidence_gap' ? '证据缺口' : '待核验'}</Chip><span className="font-mono text-[11px] text-neutral-400">{card.evidence_id}</span></div>
+      <div className="mt-2 text-[13.5px] font-semibold text-neutral-900">{card.claim}</div>
+      <div className="mt-1 text-[12.5px] leading-relaxed text-neutral-600">{card.summary}</div>
+      <div className="mt-2 text-[11.5px] text-neutral-400">来源：{card.source_ref} · 置信度：{card.confidence}</div>
+    </div>
+  )
+}
+
+function OutlineView({ outline }: { outline: PresentationOutline }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="flex items-center gap-2"><Chip tone="black">叙事结构</Chip><Chip>{outline.sections.length} 个章节</Chip></div>
+      <div className="mt-2 text-[14px] font-semibold text-neutral-900">{outline.thesis}</div>
+      <div className="mt-1 text-[12.5px] text-neutral-500">{outline.storyline}</div>
+      <div className="mt-3 space-y-2">
+        {outline.sections.map((section, index) => (
+          <div key={`${section.title}-${index}`} className="flex gap-3 rounded-md bg-neutral-50 px-3 py-2">
+            <span className="font-mono text-[11px] font-bold text-emerald-600">{String(index + 1).padStart(2, '0')}</span>
+            <div><div className="text-[12.5px] font-semibold text-neutral-800">{section.title}</div><div className="text-[12px] text-neutral-500">{section.key_message}</div></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DeckReviewView({ review }: { review: PresentationDeckReview }) {
+  return (
+    <div className={`rounded-lg border p-4 ${review.passed ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+      <div className="flex items-center gap-2"><Chip tone={review.passed ? 'green' : 'amber'}>{review.passed ? '审校通过' : '已触发修订'}</Chip><span className="font-mono text-[13px] font-bold text-neutral-800">{review.score}/100</span></div>
+      {review.strengths.length > 0 && <div className="mt-3"><List items={review.strengths} tone="text-neutral-700" /></div>}
+      {review.issues.length > 0 && <div className="mt-3"><div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-700">问题与修订</div><List items={review.issues} tone="text-amber-900" /></div>}
+    </div>
+  )
+}
+
+function PresentationDeckView({ deck }: { deck: PresentationDeck }) {
+  const [exporting, setExporting] = useState(false)
+  const [error, setError] = useState('')
+  const download = async () => {
+    setExporting(true)
+    setError('')
+    try {
+      const { exportPresentationDeck } = await import('../lib/presentation-production')
+      await exportPresentationDeck(deck)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setExporting(false)
+    }
+  }
+  return (
+    <div className="rounded-xl border-2 border-neutral-900 bg-white p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2"><Chip tone="black">可编辑 PPTX</Chip><Chip>{deck.slides.length} 页</Chip><Chip tone={deck.qa.passed ? 'green' : 'amber'}>{deck.qa.passed ? '基础 QA 通过' : '含质量警告'}</Chip></div>
+          <div className="mt-2 text-[17px] font-bold text-neutral-900">{deck.title}</div>
+          <div className="mt-1 text-[12.5px] text-neutral-500">{deck.subtitle}</div>
+        </div>
+        <button onClick={() => void download()} disabled={exporting} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-300">
+          <Download className="h-4 w-4" />{exporting ? '正在生成…' : '下载可编辑 PPTX'}
+        </button>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {deck.slides.map((slide, index) => (
+          <div key={slide.slide_id} className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+            <div className="flex items-center gap-2"><span className="font-mono text-[10.5px] text-emerald-600">{String(index + 1).padStart(2, '0')}</span><span className="truncate text-[12.5px] font-semibold text-neutral-800">{slide.title}</span><span className="ml-auto text-[10px] text-neutral-400">{slide.type}</span></div>
+            <div className="mt-1 line-clamp-2 text-[11.5px] text-neutral-500">{slide.key_message}</div>
+          </div>
+        ))}
+      </div>
+      {deck.qa.warnings.length > 0 && <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800">{deck.qa.warnings.join('；')}</div>}
+      {error && <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-[11.5px] text-red-700">PPTX 生成失败：{error}</div>}
+    </div>
+  )
+}
+
 // ---- 工件分发 ----
 export function ArtifactView({ artifact, config, tokens }: { artifact: Artifact; config?: ScenarioConfig; tokens?: number }) {
   switch (artifact.kind) {
@@ -285,6 +395,18 @@ export function ArtifactView({ artifact, config, tokens }: { artifact: Artifact;
       return <OuterCardView card={artifact} config={config} tokens={tokens} />
     case 'FishbowlSummaryCard':
       return <SummaryCardView card={artifact} />
+    case 'PresentationBrief':
+      return <PresentationBriefView brief={artifact} />
+    case 'PresentationResearchPlan':
+      return <ResearchPlanView plan={artifact} />
+    case 'PresentationEvidenceCard':
+      return <EvidenceCardView card={artifact} />
+    case 'PresentationOutline':
+      return <OutlineView outline={artifact} />
+    case 'PresentationDeckReview':
+      return <DeckReviewView review={artifact} />
+    case 'PresentationDeck':
+      return <PresentationDeckView deck={artifact} />
     default:
       return null
   }

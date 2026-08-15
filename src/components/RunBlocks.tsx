@@ -27,6 +27,7 @@ export function DispatchBlock({ running, profile, tokens }: { running: boolean; 
           <div className="flex flex-wrap items-center gap-2">
             <Chip tone="black">agent_count = {profile.agent_count}</Chip>
             <Chip tone="black">task_type = {profile.task_type}</Chip>
+            {profile.deliverable === 'presentation' && <Chip tone="green">deliverable = PPTX</Chip>}
             {profile.game_type && <Chip tone="black">game = {profile.game_type}</Chip>}
           </div>
           <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3">

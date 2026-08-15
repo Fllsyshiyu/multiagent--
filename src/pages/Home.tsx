@@ -4,14 +4,14 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { PRESETS, type Preset } from '../data/presets'
-import { LLM_PRESETS, type AgentLLMConfig, type LLMConfig, type LLMProfile, type LLMSettings, type ScenarioConfig } from '../engine/types'
+import { LLM_PRESETS, type AgentLLMConfig, type ForceDeliverable, type LLMConfig, type LLMProfile, type LLMSettings, type PresentationDeck, type ScenarioConfig } from '../engine/types'
 import { useRunEngine } from '../hooks/useRunEngine'
 import { BlockView, extractConfig } from '../components/RunBlocks'
 import { MetricsPanel } from '../components/Metrics'
 import { Chip, Spinner } from '../components/common'
 import { ComplexityBlock } from '../components/Complexity'
 import { ReportPanel } from '../components/ReportPanel'
-import { Paperclip, X } from 'lucide-react'
+import { Download, Paperclip, Presentation, X } from 'lucide-react'
 import { MAX_ATTACHMENT_COUNT, parseAttachment, type Attachment } from '../lib/attachments'
 import {
   activeLLMProfile, clearLLMSettings, createLLMProfileId, EMPTY_LLM_SETTINGS, loadLLMSettings, saveLLMSettings,
@@ -35,12 +35,18 @@ export default function Home() {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
   const [showReportPanel, setShowReportPanel] = useState(false)
+  const [deliverable, setDeliverable] = useState<ForceDeliverable>('text')
+  const [exportingDeck, setExportingDeck] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const reportRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const running = state.status === 'running'
   const started = state.blocks.length > 0 && state.status !== 'idle'
   const hasReport = state.blocks.some((b) => b.kind === 'report')
+  const presentationDeck = [...state.artifactFeed].reverse().find((item) => item.artifact.kind === 'PresentationDeck')?.artifact as PresentationDeck | undefined
+  const dispatchBlock = [...state.blocks].reverse().find((block) => block.kind === 'dispatch' && block.profile)
+  const dispatchedProfile = dispatchBlock?.kind === 'dispatch' ? dispatchBlock.profile : undefined
+  const isPresentationRun = state.stagedProfile?.deliverable === 'presentation' || dispatchedProfile?.deliverable === 'presentation' || Boolean(presentationDeck)
   const showAgentConfig = state.stagedConfig !== null && !running && state.blocks.length > 0
   const showSingleConfirm = state.stagedProfile !== null && state.stagedProfile.task_type === 'single' && state.stagedConfig === null && !running && state.status === 'idle'
   const stagedComplexity = state.blocks.find((b) => b.kind === 'complexity' && !b.running)
@@ -55,7 +61,7 @@ export default function Home() {
     if (!finalInput.trim()) return
     const p = preset ?? selectedPreset
     const script = resolveReplayScript(finalInput, p, Boolean(llmConfig))
-    analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode, attachments })
+    analyze(finalInput.trim(), { llm: llmConfig, script, forceTrack: delibMode, forceDeliverable: deliverable, attachments })
   }
 
   const handleConfirmRun = (selectedAgentLLM?: AgentLLMConfig) => {
@@ -68,6 +74,7 @@ export default function Home() {
       agentLLM: selectedAgentLLM ?? agentLLMConfig,
       script,
       forceTrack: delibMode,
+      forceDeliverable: deliverable,
       attachments,
       prepared: {
         complexity: stagedComplexity?.kind === 'complexity' && stagedComplexity.result
@@ -81,9 +88,30 @@ export default function Home() {
   }
 
   const handlePreset = (p: Preset) => {
+    setDeliverable('text')
     setSelectedPreset(p)
     setInput(p.input)
     if (!running) handleAnalyze(p.input, p)
+  }
+
+  const selectDeliverable = (next: ForceDeliverable) => {
+    if (next === deliverable) return
+    setDeliverable(next)
+    setSelectedPreset(null)
+    setShowReportPanel(false)
+    clearStaged()
+    if (next === 'presentation') setDelibMode('auto')
+  }
+
+  const downloadPresentation = async () => {
+    if (!presentationDeck || exportingDeck) return
+    setExportingDeck(true)
+    try {
+      const { exportPresentationDeck } = await import('../lib/presentation-production')
+      await exportPresentationDeck(presentationDeck)
+    } finally {
+      setExportingDeck(false)
+    }
   }
 
   const handleUploadFiles = async (files: FileList | File[]) => {
@@ -129,7 +157,17 @@ export default function Home() {
             >
               {llmConfig ? 'API 配置' : '填入 API Key'}
             </button>
-            {hasReport && started && !running && (
+            {presentationDeck && started && !running && (
+              <button
+                onClick={() => void downloadPresentation()}
+                disabled={exportingDeck}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:bg-neutral-300"
+              >
+                <Download className="h-3.5 w-3.5" />
+                {exportingDeck ? '生成中…' : '下载生成的 PPTX'}
+              </button>
+            )}
+            {hasReport && !isPresentationRun && started && !running && (
               <button
                 onClick={() => setShowReportPanel(true)}
                 className="rounded-lg border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-neutral-700"
@@ -168,8 +206,33 @@ export default function Home() {
             </p>
           </div>
 
+          {/* 交付物模式：显式选择，避免依赖提示词关键词 */}
+          <div className="mt-6 flex flex-col items-center gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-widest text-neutral-400">任务交付</span>
+            <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
+              {([
+                { key: 'text' as const, label: '普通任务' },
+                { key: 'presentation' as const, label: '生成 PPT' },
+              ]).map((mode) => (
+                <button
+                  key={mode.key}
+                  onClick={() => selectDeliverable(mode.key)}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-[12.5px] font-medium transition-all ${
+                    deliverable === mode.key ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+                  }`}
+                >
+                  {mode.key === 'presentation' && <Presentation className="h-3.5 w-3.5" />}
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-neutral-400">
+              {deliverable === 'presentation' ? '固定进入 5-Agent PPT 生产流水线，最终交付可编辑 PPTX' : '沿用单 Agent、协作议事与博弈的自动路由'}
+            </span>
+          </div>
+
           {/* 议事模式选择器 */}
-          {llmConfig && (
+          {llmConfig && deliverable === 'text' && (
             <div className="mt-6 flex flex-col items-center gap-2">
               <span className="text-[11px] font-medium uppercase tracking-widest text-neutral-400">议事模式</span>
               <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
@@ -206,7 +269,7 @@ export default function Home() {
                 if (selectedPreset && e.target.value.trim() !== selectedPreset.input.trim()) setSelectedPreset(null)
               }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAnalyze() } }}
-              placeholder="例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…"
+              placeholder={deliverable === 'presentation' ? '描述主题、受众、页数和用途，例如：基于附件制作一份面向管理层的 10 页项目汇报 PPT' : '例如：老旧小区加装电梯，各方谈不拢怎么办？/ 来一局狼人杀 / 帮我写一封通知…'}
               rows={3}
               className="w-full resize-none rounded-2xl bg-transparent px-5 pt-4 text-[15px] leading-relaxed outline-none placeholder:text-neutral-400"
             />
@@ -401,7 +464,17 @@ export default function Home() {
                   <div className="mt-1 text-[12.5px] text-neutral-400">
                     共 {state.ledger.calls} 次 LLM 调用 · {state.ledger.total_tokens.toLocaleString()} tokens
                   </div>
-                  {hasReport && (
+                  {presentationDeck && (
+                    <button
+                      onClick={() => void downloadPresentation()}
+                      disabled={exportingDeck}
+                      className="mt-3 mr-3 inline-flex items-center gap-1.5 rounded-lg bg-white px-4 py-1.5 text-[12.5px] font-medium text-neutral-900 hover:bg-neutral-100 disabled:bg-neutral-300"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      {exportingDeck ? '生成中…' : '下载可编辑 PPTX'}
+                    </button>
+                  )}
+                  {hasReport && !isPresentationRun && (
                     <button
                       onClick={() => setShowReportPanel(true)}
                       className="mt-3 mr-3 rounded-lg border border-neutral-600 bg-neutral-800 px-4 py-1.5 text-[12.5px] font-medium text-white hover:bg-neutral-700"
@@ -434,7 +507,7 @@ export default function Home() {
       )}
 
       {/* 议事报告导出面板 */}
-      {showReportPanel && (
+      {showReportPanel && !isPresentationRun && (
         <ReportPanel state={state} onClose={() => setShowReportPanel(false)} />
       )}
     </div>
@@ -512,7 +585,7 @@ function AgentConfigPanel({
   return (
     <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-neutral-900">Agent 角色分配 · 模型配置</h3>
+        <h3 className="text-[15px] font-bold text-neutral-900">{config.profile.deliverable === 'presentation' ? 'PPT 专业 Agent 分工 · 模型配置' : 'Agent 角色分配 · 模型配置'}</h3>
         <button onClick={onCancel} className="text-[12.5px] text-neutral-400 hover:text-neutral-600">取消</button>
       </div>
       <p className="mt-1 text-[12.5px] text-neutral-500">
@@ -639,7 +712,7 @@ function AgentConfigPanel({
           disabled={(mode === 'shared' && !hasProfiles) || (mode === 'per_agent' && !allPerAgentComplete)}
           className="rounded-lg bg-neutral-900 px-5 py-2 text-[13px] font-medium text-white hover:bg-neutral-700 disabled:bg-neutral-200"
         >
-          确认并启动议事
+          {config.profile.deliverable === 'presentation' ? '确认并开始制作 PPT' : '确认并启动议事'}
         </button>
       </div>
     </div>

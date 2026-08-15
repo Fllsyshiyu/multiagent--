@@ -10,6 +10,7 @@ import { z } from 'zod'
 export interface CallResult {
   text: string
   tokens: number
+  finish_reason?: string
   invocation?: {
     mode: 'live' | 'replay' | 'mock'
     model: string
@@ -83,6 +84,7 @@ export function createLLMCaller(
     return {
       text,
       tokens,
+      finish_reason: data.choices?.[0]?.finish_reason,
       invocation: { mode: 'live', model: config.model, latency_ms: performance.now() - startedAt, result_status: 'success' },
     }
   }
@@ -124,20 +126,25 @@ export async function callJSON<T>(
   system: string,
   user: string,
   onRetry?: (attempt: number) => void,
+  options?: { max_tokens?: number },
 ): Promise<{ data: T; tokens: number }> {
-  const first = await caller(system, user, { json: true })
+  const first = await caller(system, user, { json: true, max_tokens: options?.max_tokens })
   try {
     return { data: extractJSON<T>(first.text), tokens: first.tokens }
   } catch {
     onRetry?.(2)
+    const truncationHint = first.finish_reason === 'length'
+      ? '\n【截断修复】上一次输出达到长度上限。请压缩字段内容、减少重复，只保留完成 JSON 所需的信息。'
+      : ''
     const retryUser =
       user +
-      '\n\n【系统提示】你上一次的输出不是合法 JSON。请只输出一个严格合法的 JSON 对象，不要任何解释性文字、不要 Markdown 代码块。'
-    const second = await caller(system, retryUser, { json: true })
+      '\n\n【系统提示】你上一次的输出不是合法 JSON。请只输出一个严格合法的 JSON 对象，不要任何解释性文字、不要 Markdown 代码块。' + truncationHint
+    const second = await caller(system, retryUser, { json: true, max_tokens: options?.max_tokens })
     try {
       return { data: extractJSON<T>(second.text), tokens: first.tokens + second.tokens }
     } catch (e) {
-      throw new Error('两次尝试后仍无法获得合法 JSON：' + (e instanceof Error ? e.message : String(e)))
+      const reason = second.finish_reason === 'length' ? '模型输出达到长度上限，JSON 被截断' : (e instanceof Error ? e.message : String(e))
+      throw new Error('两次尝试后仍无法获得合法 JSON：' + reason)
     }
   }
 }

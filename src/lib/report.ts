@@ -272,6 +272,8 @@ function artifactText(artifact: Artifact, agentName: (id?: string) => string): s
     case 'ExamBlueprint':
     case 'ExamResult':
       return ''
+    default:
+      return ''
   }
 }
 

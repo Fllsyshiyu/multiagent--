@@ -9,7 +9,7 @@ import { policyToLegacyCombo, STRATEGY_LABELS as FINAL_STRATEGY_LABELS } from '.
 import { validatePolicy } from './framework/validation'
 import { parseGameRequest } from './game-request'
 
-import type { ForceTrack } from './types'
+import type { ForceDeliverable, ForceTrack } from './types'
 
 const DISPATCH_SYSTEM = `你是 MA-Collab 编排框架的 Dispatcher。你的任务不是回答用户，而是对用户输入进行场景分类，输出一个 TaskProfile JSON。
 判断规则：
@@ -40,11 +40,23 @@ const DISPATCH_SCHEMA = `{
   "reasoning": "<一句话分类理由>"
 }`
 
+/**
+ * 交付物识别使用确定性规则，避免依赖不同基座模型是否返回新增字段。
+ * 这里要求同时出现 PPT 载体词和制作意图，防止“分析某份 PPT”被误路由为生成任务。
+ */
+export function isPresentationProductionRequest(userInput: string): boolean {
+  const hasFormat = /(?:pptx?|power\s*point|幻灯片|演示文稿|路演稿|汇报材料)/i.test(userInput)
+  const hasCreateIntent = /(?:生成|制作|创建|产出|准备|设计|做一份|写一份|帮我做|帮我生成|make|create|build|generate|prepare)/i.test(userInput)
+  const isAnalysisOnly = /(?:分析|审阅|评价|对比|检查|修改建议).{0,8}(?:已有|这份|该份)?\s*(?:pptx?|幻灯片|演示文稿)/i.test(userInput)
+  return hasFormat && hasCreateIntent && !isAnalysisOnly
+}
+
 export async function dispatch(
   caller: LLMCaller,
   userInput: string,
   onRetry?: (attempt: number) => void,
   forceTrack?: ForceTrack,
+  forceDeliverable?: ForceDeliverable,
 ): Promise<{ profile: TaskProfile; tokens: number }> {
   const { data, tokens } = await callJSON<TaskProfile>(
     caller,
@@ -60,12 +72,16 @@ export async function dispatch(
     data.domain = 'game'
     data.reasoning = `【输入显式指定】game_type=${explicitGame.gameType}${explicitGame.playerCount ? `，player_count=${explicitGame.playerCount}` : ''}；${data.reasoning}`
   }
+  const presentationRequest = forceDeliverable === 'presentation'
+    || (forceDeliverable !== 'text' && !explicitGame.gameType && isPresentationProductionRequest(userInput))
+  data.deliverable = presentationRequest ? 'presentation' : 'text'
   // ForceTrack 覆盖（用户手动选择议事模式）
-  if (forceTrack === 'single') {
+  if (forceTrack === 'single' && !presentationRequest) {
     data.agent_count = 1
     data.task_type = 'single'
     data.game_type = null
     data.reasoning = '【用户强制单 Agent 模式】' + data.reasoning
+    data.deliverable = 'text'
   } else if (forceTrack === 'multi') {
     if (data.agent_count <= 1) data.agent_count = 3
     if (data.task_type === 'single') {
@@ -80,6 +96,12 @@ export async function dispatch(
     if (data.agent_count <= 1) data.task_type = 'single'
     // competitive 且 game_type 缺失时保留 null，交由通用博弈规则编译器动态生成，
     // 不再把所有未知博弈默认成狼人杀。
+  }
+  if (presentationRequest) {
+    data.agent_count = 5
+    data.task_type = 'collaborative'
+    data.game_type = null
+    data.reasoning = `【交付物路由】识别为多 Agent 演示文稿生产任务；${data.reasoning}`
   }
   return { profile: data, tokens }
 }
