@@ -44,29 +44,62 @@ function cleanText(value: string): string {
     .trim()
 }
 
-const CONTENT_CHARS_PER_LINE = 48
-const CONTENT_MAX_LINES = 9
+const CONTENT_BOX_W = 11.5
+const CONTENT_FONT = 11.5
+const AGENDA_FONT = 12
+const CONTENT_MAX_LINES = 14
 
-function wrapParagraph(value: string): string[] {
-  if (!value) return ['']
-  return value.split('\n').flatMap((line) => {
-    if (!line) return ['']
-    return wrapSingleLine(line)
-  })
+/** 字符视觉宽度：全角（CJK、全角符号）按 2 计，半角按 1 计 */
+function charWidth(ch: string): number {
+  const code = ch.codePointAt(0) ?? 0
+  if (
+    (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+    (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) || // CJK 部首、汉字、假名等
+    (code >= 0xac00 && code <= 0xd7a3) || // Hangul 音节
+    (code >= 0xf900 && code <= 0xfaff) || // CJK 兼容汉字
+    (code >= 0xfe10 && code <= 0xfe19) || // 竖排形式
+    (code >= 0xfe30 && code <= 0xfe6f) || // CJK 兼容形式
+    (code >= 0xff00 && code <= 0xff60) || // 全角形式
+    (code >= 0xffe0 && code <= 0xffe6) || // 全角符号
+    (code >= 0x1f300 && code <= 0x1f64f) || // emoji
+    (code >= 0x1f900 && code <= 0x1f9ff) || // 补充 emoji
+    code === 0x3000 // 全角空格
+  ) {
+    return 2
+  }
+  return 1
 }
 
-function wrapSingleLine(value: string): string[] {
+/** 按文本框宽度与字号估算一行可容纳的“全角字符”数（保守值，防止 PowerPoint 实际折行更多而溢出） */
+function charsPerLine(fontSize: number): number {
+  // 文本框宽 11.5in = 828pt；微软雅黑全角字宽 ≈ 字号，留 8% 余量
+  return Math.max(16, Math.floor((CONTENT_BOX_W * 72 * 0.92) / fontSize))
+}
+
+function wrapSingleLine(value: string, perLine: number): string[] {
   const lines: string[] = []
   let current = ''
-  for (const char of value) {
-    current += char
-    if (current.length >= CONTENT_CHARS_PER_LINE) {
+  let width = 0
+  for (const ch of value) {
+    const w = charWidth(ch)
+    if (current && width + w > perLine) {
       lines.push(current)
       current = ''
+      width = 0
     }
+    current += ch
+    width += w
   }
   if (current) lines.push(current)
   return lines
+}
+
+function wrapParagraph(value: string, perLine: number): string[] {
+  if (!value) return ['']
+  return value.split('\n').flatMap((line) => {
+    if (!line) return ['']
+    return wrapSingleLine(line, perLine)
+  })
 }
 
 function itemLines(item: ReportItem): string[] {
@@ -87,10 +120,10 @@ function itemLines(item: ReportItem): string[] {
   return [`■ ${label}${value}`]
 }
 
-function packParagraphs(paragraphs: string[]): string[] {
+function packParagraphs(paragraphs: string[], perLine: number): string[] {
   const pages: string[][] = [[]]
   for (const paragraph of paragraphs) {
-    const wrapped = wrapParagraph(paragraph)
+    const wrapped = wrapParagraph(paragraph, perLine)
     if (wrapped.length <= CONTENT_MAX_LINES) {
       const page = pages[pages.length - 1]
       if (page.length + wrapped.length > CONTENT_MAX_LINES) pages.push([])
@@ -111,13 +144,13 @@ function packParagraphs(paragraphs: string[]): string[] {
 
 function pageItems(items: ReportItem[]): string[] {
   if (!items.length) return ['暂无内容']
-  return packParagraphs(items.flatMap((item) => itemLines(item)))
+  return packParagraphs(items.flatMap((item) => itemLines(item)), charsPerLine(CONTENT_FONT))
 }
 
 function pageAgenda(sections: DeliberationReport['sections']): string[] {
   return packParagraphs(sections.map((section, index) =>
     `${String(index + 1).padStart(2, '0')}  ${cleanText(section.title)}`,
-  ))
+  ), charsPerLine(AGENDA_FONT))
 }
 
 function titleFontSize(value: string, base: number): number {
@@ -229,17 +262,17 @@ function addAgendaSlide(pptx: PptxGenJS, content: string, partIndex: number, par
   const slide = pptx.addSlide()
   slide.background = { color: PALETTE.canvas }
   addHeader(slide, partCount > 1 ? `议程 · ${partIndex + 1}/${partCount}` : '议程', accent)
-  slide.addText(content.split('\n').map((text) => ({ text, options: { breakLine: true } })), {
+  slide.addText(content, {
     x: 0.9,
     y: 1.5,
     w: 11.5,
-    h: 5.35,
+    h: 5.6,
     fontFace: FONT,
-    fontSize: 12,
+    fontSize: AGENDA_FONT,
     color: PALETTE.ink,
     lineSpacing: 17,
     paraSpaceAfter: 3,
-    fit: 'shrink',
+    breakLine: true,
   })
   addBrandFooter(slide, accent)
   slide.addNotes(content)
@@ -299,18 +332,17 @@ function addContentSlide(
   slide.background = { color: PALETTE.canvas }
   const suffix = partCount > 1 ? ` · ${partIndex + 1}/${partCount}` : ''
   addHeader(slide, `${cleanText(section.title)}${suffix}`, accent)
-  slide.addText(content.split('\n').map((text) => ({ text, options: { breakLine: true } })), {
+  slide.addText(content, {
     x: 0.9,
     y: 1.5,
     w: 11.5,
-    h: 5.35,
+    h: 5.6,
     fontFace: FONT,
-    fontSize: 11.5,
+    fontSize: CONTENT_FONT,
     color: PALETTE.ink,
     lineSpacing: 16,
     paraSpaceAfter: 3,
     breakLine: true,
-    fit: 'shrink',
   })
   addBrandFooter(slide, accent)
   slide.addNotes(content)
@@ -340,7 +372,7 @@ function addClosingSlide(pptx: PptxGenJS, report: DeliberationReport, accent: st
     color: 'D1D5DB',
     breakLine: true,
   })
-  slide.addText(report.meta.title, {
+  slide.addText(truncateTitle(report.meta.title, 36), {
     x: 0.9,
     y: 4.3,
     w: 11,
@@ -348,6 +380,7 @@ function addClosingSlide(pptx: PptxGenJS, report: DeliberationReport, accent: st
     fontFace: FONT,
     fontSize: 10,
     color: PALETTE.faint,
+    breakLine: true,
   })
 }
 
