@@ -115,7 +115,7 @@ export default function Home() {
       <header className="sticky top-0 z-30 border-b border-neutral-100 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
           <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-[13px] font-bold text-white">M</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-[13px] font-bold text-white">A</span>
             <div>
               <div className="text-[14px] font-bold leading-tight">ALLK Agora</div>
               <div className="text-[10.5px] leading-tight text-neutral-400">通用多智能体编排框架</div>
