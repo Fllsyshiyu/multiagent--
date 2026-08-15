@@ -28,21 +28,86 @@ function safeFileName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, '-').trim() || '议事报告'
 }
 
+function cleanText(value: string): string {
+  return value
+    .replace(/\r/g, '')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+const CONTENT_CHARS_PER_LINE = 54
+const CONTENT_MAX_LINES = 11
+
+function wrapParagraph(value: string): string[] {
+  if (!value) return ['']
+  const lines: string[] = []
+  let current = ''
+  for (const char of value) {
+    current += char
+    if (current.length >= CONTENT_CHARS_PER_LINE) {
+      lines.push(current)
+      current = ''
+    }
+  }
+  if (current) lines.push(current)
+  return lines
+}
+
 function itemLines(item: ReportItem): string[] {
   if (item.kind === 'list') {
-    return (item.items ?? []).map((entry) => `• ${entry}`)
+    return (item.items ?? []).map((entry) => `• ${cleanText(entry)}`)
   }
-  const label = item.label ? `${item.label}：` : ''
+  const label = item.label ? `${cleanText(item.label)}：` : ''
+  const value = cleanText(item.text ?? '')
   if (item.kind === 'score') {
-    return [`■ ${label}${item.score ?? 0} / ${item.max ?? 0}${item.text ? ` · ${item.text}` : ''}`]
+    return [`■ ${label}${item.score ?? 0} / ${item.max ?? 0}${value ? ` · ${value}` : ''}`]
   }
   if (item.kind === 'status') {
-    return [`★ ${label}${item.text ?? ''}`]
+    return [`★ ${label}${value}`]
   }
   if (item.kind === 'metric') {
-    return [`■ ${label}${item.text ?? ''}`]
+    return [`■ ${label}${value}`]
   }
-  return [`■ ${label}${item.text ?? ''}`]
+  return [`■ ${label}${value}`]
+}
+
+function packBlocks(blocks: string[][]): string[] {
+  const pages: string[][] = [[]]
+  for (const sourceBlock of blocks) {
+    let block = sourceBlock.flatMap(wrapParagraph)
+    while (block.length) {
+      const page = pages[pages.length - 1]
+      const capacity = CONTENT_MAX_LINES - page.length
+      if (capacity <= 0) {
+        pages.push([])
+        continue
+      }
+      page.push(...block.slice(0, capacity))
+      block = block.slice(capacity)
+      if (block.length) pages.push([])
+    }
+  }
+  return pages.map((lines) => lines.join('\n'))
+}
+
+function pageItems(items: ReportItem[]): string[] {
+  if (!items.length) return ['暂无内容']
+  return packBlocks(items.map((item) => itemLines(item)))
+}
+
+function pageAgenda(sections: DeliberationReport['sections']): string[] {
+  return packBlocks(sections.map((section, index) => [
+    `${String(index + 1).padStart(2, '0')}  ${cleanText(section.title)}`,
+  ]))
 }
 
 function addBrandFooter(slide: PptxGenJS.Slide, accent: string) {
@@ -61,15 +126,17 @@ function addBrandFooter(slide: PptxGenJS.Slide, accent: string) {
 function addHeader(slide: PptxGenJS.Slide, title: string, accent: string) {
   slide.addText(title, {
     x: 0.75,
-    y: 0.55,
+    y: 0.52,
     w: 10.8,
-    h: 0.75,
+    h: 0.82,
     fontFace: FONT,
-    fontSize: 24,
+    fontSize: 20,
     bold: true,
     color: PALETTE.ink,
+    breakLine: true,
+    fit: 'shrink',
   })
-  slide.addShape('rect', { x: 0.78, y: 1.2, w: 0.9, h: 0.065, fill: { color: accent } })
+  slide.addShape('rect', { x: 0.78, y: 1.25, w: 0.9, h: 0.065, fill: { color: accent } })
   slide.addText('DELIBERATION REPORT', {
     x: 0.78,
     y: 0.35,
@@ -95,25 +162,27 @@ function addCoverSlide(pptx: PptxGenJS, report: DeliberationReport, accent: stri
     fontSize: 10,
     color: accent,
   })
-  slide.addText(report.meta.title, {
+  slide.addText(cleanText(report.meta.title), {
     x: 0.9,
     y: 1.45,
     w: 11.4,
-    h: 1.45,
+    h: 1.6,
     fontFace: FONT,
     fontSize: 34,
     bold: true,
     color: PALETTE.white,
+    fit: 'shrink',
   })
-  slide.addText(report.meta.issue || '未记录议题', {
+  slide.addText(cleanText(report.meta.issue || '未记录议题'), {
     x: 0.9,
     y: 3.0,
     w: 11.4,
-    h: 1.2,
+    h: 1.3,
     fontFace: FONT,
     fontSize: 15,
     color: 'D1D5DB',
     breakLine: true,
+    fit: 'shrink',
   })
   slide.addText([
     { text: report.meta.categoryLabel, options: { breakLine: true } },
@@ -131,26 +200,26 @@ function addCoverSlide(pptx: PptxGenJS, report: DeliberationReport, accent: stri
     color: 'D1D5DB',
     paraSpaceAfter: 4,
   })
-  slide.addNotes(`议题：${report.meta.issue}\n任务类别：${report.meta.categoryLabel}\n终止状态：${report.meta.terminalState}`)
+  slide.addNotes(`议题：${cleanText(report.meta.issue)}\n任务类别：${cleanText(report.meta.categoryLabel)}\n终止状态：${report.meta.terminalState}`)
 }
 
-function addAgendaSlide(pptx: PptxGenJS, report: DeliberationReport, accent: string) {
+function addAgendaSlide(pptx: PptxGenJS, content: string, partIndex: number, partCount: number, accent: string) {
   const slide = pptx.addSlide()
   slide.background = { color: PALETTE.canvas }
-  addHeader(slide, '议程', accent)
-  const bullets = report.sections.map((section, index) => `${String(index + 1).padStart(2, '0')}  ${section.title}`)
-  slide.addText(bullets.map((entry) => ({ text: entry, options: { bullet: true, breakLine: true } })), {
+  addHeader(slide, partCount > 1 ? `议程 · ${partIndex + 1}/${partCount}` : '议程', accent)
+  slide.addText(content.split('\n').map((text) => ({ text, options: { breakLine: true } })), {
     x: 1,
     y: 1.7,
     w: 11.2,
     h: 4.7,
     fontFace: FONT,
-    fontSize: 14,
+    fontSize: 13,
     color: PALETTE.ink,
-    paraSpaceAfter: 8,
+    paraSpaceAfter: 7,
     fit: 'shrink',
   })
   addBrandFooter(slide, accent)
+  slide.addNotes(content)
 }
 
 function addSectionDivider(pptx: PptxGenJS, index: number, section: DeliberationReport['sections'][number], accent: string) {
@@ -167,36 +236,38 @@ function addSectionDivider(pptx: PptxGenJS, index: number, section: Deliberation
     bold: true,
     color: accent,
   })
-  slide.addText(section.title, {
+  slide.addText(cleanText(section.title), {
     x: 3.4,
     y: 2.35,
     w: 8.5,
-    h: 1.1,
+    h: 1.25,
     fontFace: FONT,
     fontSize: 28,
     bold: true,
     color: PALETTE.white,
+    breakLine: true,
+    fit: 'shrink',
   })
   if (section.subtitle) {
-    slide.addText(section.subtitle, {
+    slide.addText(cleanText(section.subtitle), {
       x: 3.4,
       y: 3.35,
       w: 8.5,
-      h: 0.8,
+      h: 0.9,
       fontFace: FONT,
       fontSize: 13,
       color: 'D1D5DB',
       breakLine: true,
+      fit: 'shrink',
     })
   }
-  slide.addNotes(`${section.title}\n${section.subtitle ?? ''}`)
+  slide.addNotes(`${cleanText(section.title)}\n${cleanText(section.subtitle ?? '')}`)
 }
 
 function addContentSlide(
   pptx: PptxGenJS,
-  report: DeliberationReport,
   section: DeliberationReport['sections'][number],
-  items: ReportItem[],
+  content: string,
   partIndex: number,
   partCount: number,
   accent: string,
@@ -204,24 +275,22 @@ function addContentSlide(
   const slide = pptx.addSlide()
   slide.background = { color: PALETTE.canvas }
   const suffix = partCount > 1 ? ` · ${partIndex + 1}/${partCount}` : ''
-  addHeader(slide, `${section.title}${suffix}`, accent)
-  const lines = items.flatMap((item) => [...itemLines(item), ''])
-  slide.addText(lines.filter(Boolean).join('\n'), {
+  addHeader(slide, `${cleanText(section.title)}${suffix}`, accent)
+  slide.addText(content.split('\n').map((text) => ({ text, options: { breakLine: true } })), {
     x: 1.0,
     y: 1.75,
     w: 11.2,
-    h: 4.85,
+    h: 4.7,
     fontFace: FONT,
-    fontSize: 13,
+    fontSize: 12,
     color: PALETTE.ink,
-    lineSpacing: 20,
-    paraSpaceAfter: 5,
+    lineSpacing: 18,
+    paraSpaceAfter: 4,
     breakLine: true,
     fit: 'shrink',
   })
   addBrandFooter(slide, accent)
-  slide.addNotes(lines.filter(Boolean).join('\n'))
-  void report
+  slide.addNotes(content)
 }
 
 function addClosingSlide(pptx: PptxGenJS, report: DeliberationReport, accent: string) {
@@ -265,17 +334,14 @@ export function buildReportPresentation(report: DeliberationReport): PptxGenJS {
   pptx.layout = 'DELIBERATION_WIDE'
   const accent = accentFor(report.meta.category)
   addCoverSlide(pptx, report, accent)
-  addAgendaSlide(pptx, report, accent)
+  const agendaPages = pageAgenda(report.sections)
+  agendaPages.forEach((content, index) => addAgendaSlide(pptx, content, index, agendaPages.length, accent))
 
   report.sections.forEach((section, index) => {
     addSectionDivider(pptx, index, section, accent)
-    const chunkSize = 4
-    const chunks = Array.from({ length: Math.ceil(section.items.length / chunkSize) }, (_, chunkIndex) =>
-      section.items.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize),
-    )
-    if (chunks.length === 0) chunks.push([])
-    chunks.forEach((items, chunkIndex) => {
-      addContentSlide(pptx, report, section, items, chunkIndex, chunks.length, accent)
+    const pages = pageItems(section.items)
+    pages.forEach((content, pageIndex) => {
+      addContentSlide(pptx, section, content, pageIndex, pages.length, accent)
     })
   })
 

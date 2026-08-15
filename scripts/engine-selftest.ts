@@ -18,6 +18,7 @@ import { GenericGameEngine, buildRoleList, normalizeGameSpec } from '../src/engi
 import { AVALON_SPEC, CYBER_DEFENSE_SPEC, FRAUD_AUDIT_SPEC, GAME_REGISTRY, UNDERCOVER_SPEC, WEREWOLF_SPEC } from '../src/engine/game-specs'
 import { parseGameRequest } from '../src/engine/game-request'
 import { createReplayCaller, offlineProfile } from '../src/engine/replay'
+import { buildReportPresentation } from '../src/lib/presentation'
 
 function testPhase(input: Partial<Phase> & Pick<Phase, 'id' | 'kind'>): Phase {
   const policy = input.policy ?? { A: 'A1', B: 'B2', C: 'C1', D: 'D1', E: 'E1' }
@@ -335,6 +336,27 @@ export async function run() {
   const continuation = await orchestration.submitEvidence(compiled, { id: 'ev_runtime', issue_id: compiled.issue_graph.root_issue_id, claim: '运行后补充核验材料', source: '审计机构', observed_at: new Date().toISOString(), scope: '根议题', confidence: 0.9, verified: true }, [compiled.issue_graph.root_issue_id])
   assert.ok(continuation.phase_graph.phases.some((phase) => phase.id.startsWith('evidence_review_')))
   assert.ok(events.some((event) => event.t === 'event_rule_fired' && event.evaluation.rule_id === 'new_evidence_reopen_v1'))
+
+  const samplePresentation = buildReportPresentation({
+    meta: {
+      title: '议事报告',
+      issue: '老旧小区加装电梯问题 **测试**',
+      category: 'collaborative',
+      categoryLabel: '多智能体协作议事',
+      terminalState: 'DECIDED',
+      generatedAt: '2026-08-15',
+      tokens: 1000,
+      calls: 20,
+      agentCount: 3,
+    },
+    sections: [
+      { id: 'summary', title: '执行摘要', items: [{ kind: 'metric', label: '议题', text: '老旧小区加装电梯问题' }, { kind: 'status', label: '结论', text: '有条件推进', tone: 'success' }] },
+      { id: 'long', title: '长文本分页', items: [{ kind: 'text', label: '完整讨论', text: Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 条：**加装电梯**需要明确责任主体、资金来源、施工方案和复评机制。`).join('\n') }] },
+      { id: 'final', title: '最终方案', items: [{ kind: 'list', items: ['明确责任主体', '设置退出机制', '建立复评机制'] }] },
+    ],
+  })
+  const presentationBuffer = await samplePresentation.write({ outputType: 'arraybuffer' })
+  assert.ok(presentationBuffer.byteLength > 5000)
 
   console.log('engine framework self-tests passed')
 }
